@@ -33,7 +33,6 @@ Shader "Hidden/NaniteComposite"
             };
 
             sampler2D _MainTex;
-            float4 _ProjectionParams;
 
             v2f vert (appdata v)
             {

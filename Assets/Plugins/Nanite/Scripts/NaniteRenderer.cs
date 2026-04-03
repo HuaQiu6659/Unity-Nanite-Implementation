@@ -214,8 +214,8 @@ namespace UnityNanite
 
             // 清空Visibility Buffer
             int clearKernel = softwareRasterizer.FindKernel("ClearVisibilityBuffer");
-            cmd.SetComputeIntParam(softwareRasterizer, "_ScreenWidth", Screen.width);
-            cmd.SetComputeIntParam(softwareRasterizer, "_ScreenHeight", Screen.height);
+            cmd.SetComputeIntParam(softwareRasterizer, "_RasterScreenWidth", Screen.width);
+            cmd.SetComputeIntParam(softwareRasterizer, "_RasterScreenHeight", Screen.height);
             cmd.SetComputeBufferParam(softwareRasterizer, clearKernel, "_DepthBuffer", depthBuffer);
             cmd.SetComputeBufferParam(softwareRasterizer, clearKernel, "_PayloadBuffer", payloadBuffer);
             cmd.DispatchCompute(softwareRasterizer, clearKernel, Mathf.CeilToInt(Screen.width / 8f), Mathf.CeilToInt(Screen.height / 8f), 1);
@@ -277,8 +277,8 @@ namespace UnityNanite
             // 5. 执行软光栅化
             int rasterKernel = softwareRasterizer.FindKernel("SoftwareRasterize");
             cmd.SetComputeMatrixParam(softwareRasterizer, "_MatrixVP", mainCam.projectionMatrix * mainCam.worldToCameraMatrix);
-            cmd.SetComputeIntParam(softwareRasterizer, "_ScreenWidth", Screen.width);
-            cmd.SetComputeIntParam(softwareRasterizer, "_ScreenHeight", Screen.height);
+            cmd.SetComputeIntParam(softwareRasterizer, "_RasterScreenWidth", Screen.width);
+            cmd.SetComputeIntParam(softwareRasterizer, "_RasterScreenHeight", Screen.height);
             cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibleTrianglesCount", visibleTrianglesCountBuffer);
             cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibleTrianglesSW", visibleTrianglesBuffer);
             cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_DepthBuffer", depthBuffer);

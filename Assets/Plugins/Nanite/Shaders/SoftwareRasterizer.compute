@@ -5,12 +5,18 @@
 RWStructuredBuffer<uint> _DepthBuffer;
 RWStructuredBuffer<uint> _PayloadBuffer;
 
+cbuffer Params
+{
+    uint _RasterScreenWidth;
+    uint _RasterScreenHeight;
+}
+
 [numthreads(8, 8, 1)]
 void ClearVisibilityBuffer (uint3 id : SV_DispatchThreadID)
 {
-    if (id.x < _ScreenWidth && id.y < _ScreenHeight)
+    if (id.x < _RasterScreenWidth && id.y < _RasterScreenHeight)
     {
-        uint pixelIndex = id.y * _ScreenWidth + id.x;
+        uint pixelIndex = id.y * _RasterScreenWidth + id.x;
         _DepthBuffer[pixelIndex] = 0;
         _PayloadBuffer[pixelIndex] = 0;
     }
@@ -30,8 +36,6 @@ struct VisibleTriangle
 StructuredBuffer<VisibleTriangle> _VisibleTrianglesSW;
 StructuredBuffer<uint> _VisibleTrianglesCount; // 新增：安全越界检查
 float4x4 _MatrixVP;
-uint _ScreenWidth;
-uint _ScreenHeight;
 
 // Function to pack visibility data
 uint64_t PackVisibility(float depth, uint clusterID, uint triID, uint materialID, uint mipLevel)
@@ -68,15 +72,15 @@ void SoftwareRasterize (uint3 id : SV_DispatchThreadID)
     p2.xyz /= p2.w;
     
     // Screen space coordinates
-    float2 s0 = (p0.xy * 0.5 + 0.5) * float2(_ScreenWidth, _ScreenHeight);
-    float2 s1 = (p1.xy * 0.5 + 0.5) * float2(_ScreenWidth, _ScreenHeight);
-    float2 s2 = (p2.xy * 0.5 + 0.5) * float2(_ScreenWidth, _ScreenHeight);
+    float2 s0 = (p0.xy * 0.5 + 0.5) * float2(_RasterScreenWidth, _RasterScreenHeight);
+    float2 s1 = (p1.xy * 0.5 + 0.5) * float2(_RasterScreenWidth, _RasterScreenHeight);
+    float2 s2 = (p2.xy * 0.5 + 0.5) * float2(_RasterScreenWidth, _RasterScreenHeight);
     
     // Bounding box of the triangle
     int minX = max(0, (int)min(s0.x, min(s1.x, s2.x)));
-    int maxX = min((int)_ScreenWidth - 1, (int)max(s0.x, max(s1.x, s2.x)));
+    int maxX = min((int)_RasterScreenWidth - 1, (int)max(s0.x, max(s1.x, s2.x)));
     int minY = max(0, (int)min(s0.y, min(s1.y, s2.y)));
-    int maxY = min((int)_ScreenHeight - 1, (int)max(s0.y, max(s1.y, s2.y)));
+    int maxY = min((int)_RasterScreenHeight - 1, (int)max(s0.y, max(s1.y, s2.y)));
     
     // Rasterization loop (Edge equations)
     for (int y = minY; y <= maxY; ++y)
@@ -105,7 +109,7 @@ void SoftwareRasterize (uint3 id : SV_DispatchThreadID)
                 uint depthInt = asuint(depth); 
                 uint payload = ((tri.mipLevel & 0xF) << 28) | ((tri.materialID & 0xF) << 24) | ((tri.clusterID & 0xFFF) << 12) | (tri.triID & 0xFFF);
                 
-                uint pixelIndex = y * _ScreenWidth + x;
+                uint pixelIndex = y * _RasterScreenWidth + x;
                 uint originalDepth;
                 
                 // Using 32-bit atomic for Depth
