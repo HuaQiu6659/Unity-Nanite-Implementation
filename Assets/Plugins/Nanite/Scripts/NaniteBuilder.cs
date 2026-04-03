@@ -60,17 +60,17 @@ namespace UnityNanite
         const float kSimplifyThreshold = 0.5f;
 
         [DllImport(DLL_NAME, CallingConvention = CallingConvention.Cdecl)]
-        public static extern int meshopt_buildMeshletsBound(int index_count, int max_vertices, int max_triangles);
+        public static extern UIntPtr meshopt_buildMeshletsBound(UIntPtr index_count, UIntPtr max_vertices, UIntPtr max_triangles);
 
         [DllImport(DLL_NAME, CallingConvention = CallingConvention.Cdecl)]
-        public static extern unsafe int meshopt_buildMeshlets(
+        public static extern unsafe UIntPtr meshopt_buildMeshlets(
             Meshlet* meshlets, int* meshlet_vertices, byte* meshlet_triangles,
-            int[] indices, int index_count,
-            Vector3[] vertex_positions, int vertex_count, int vertex_position_stride,
-            int max_vertices, int max_triangles, float cone_weight);
+            int[] indices, UIntPtr index_count,
+            Vector3[] vertex_positions, UIntPtr vertex_count, UIntPtr vertex_position_stride,
+            UIntPtr max_vertices, UIntPtr max_triangles, float cone_weight);
 
         [DllImport(DLL_NAME, CallingConvention = CallingConvention.Cdecl)]
-        public static extern unsafe void meshopt_optimizeMeshlet(int* meshlet_vertices, byte* meshlet_triangles, int triangle_count, int vertex_count);
+        public static extern unsafe void meshopt_optimizeMeshlet(int* meshlet_vertices, byte* meshlet_triangles, UIntPtr triangle_count, UIntPtr vertex_count);
 
         [DllImport(DLL_NAME, CallingConvention = CallingConvention.Cdecl)]
         public static extern unsafe UIntPtr meshopt_simplify(
@@ -87,7 +87,7 @@ namespace UnityNanite
             const int max_triangles = kClusterSize; // 128
             const float cone_weight = 0.0f;
 
-            int max_meshlets = meshopt_buildMeshletsBound(indices.Length, max_vertices, max_triangles);
+            int max_meshlets = (int)meshopt_buildMeshletsBound((UIntPtr)indices.Length, (UIntPtr)max_vertices, (UIntPtr)max_triangles);
             var meshlets = new Meshlet[max_meshlets];
             var meshlet_vertices = new int[max_meshlets * max_vertices];
             var meshlet_triangles = new byte[max_meshlets * max_triangles * 3];
@@ -97,11 +97,11 @@ namespace UnityNanite
             fixed (int* pMeshletVertices = meshlet_vertices)
             fixed (byte* pMeshletTriangles = meshlet_triangles)
             {
-                meshlet_count = meshopt_buildMeshlets(
+                meshlet_count = (int)meshopt_buildMeshlets(
                     pMeshlets, pMeshletVertices, pMeshletTriangles,
-                    indices, indices.Length,
-                    vertices, vertices.Length, sizeof(float) * 3,
-                    max_vertices, max_triangles, cone_weight);
+                    indices, (UIntPtr)indices.Length,
+                    vertices, (UIntPtr)vertices.Length, (UIntPtr)(sizeof(float) * 3),
+                    (UIntPtr)max_vertices, (UIntPtr)max_triangles, cone_weight);
 
                 List<Cluster> clusters = new List<Cluster>(meshlet_count);
                 for (int i = 0; i < meshlet_count; i++)
@@ -110,7 +110,7 @@ namespace UnityNanite
                     
                     int* ptr = pMeshletVertices + meshlet.vertex_offset;
                     byte* ptr2 = pMeshletTriangles + meshlet.triangle_offset;
-                    meshopt_optimizeMeshlet(ptr, ptr2, (int)meshlet.triangle_count, (int)meshlet.vertex_count);
+                    meshopt_optimizeMeshlet(ptr, ptr2, (UIntPtr)meshlet.triangle_count, (UIntPtr)meshlet.vertex_count);
 
                     Cluster cluster = new Cluster();
                     cluster.indexStart = (uint)outIndices.Count;
