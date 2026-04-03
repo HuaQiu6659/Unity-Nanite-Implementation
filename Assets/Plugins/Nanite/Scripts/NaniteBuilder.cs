@@ -80,8 +80,9 @@ namespace UnityNanite
             UIntPtr target_index_count, float target_error,
             uint options, float* result_error);
 
-        public static unsafe List<Cluster> Clusterize(Vector3[] vertices, int[] indices, uint materialID = 0)
+        public static unsafe List<Cluster> Clusterize(Vector3[] vertices, int[] indices, out List<uint> outIndices, uint materialID = 0)
         {
+            outIndices = new List<uint>();
             const int max_vertices = 64; 
             const int max_triangles = kClusterSize; // 128
             const float cone_weight = 0.0f;
@@ -112,14 +113,28 @@ namespace UnityNanite
                     meshopt_optimizeMeshlet(ptr, ptr2, (int)meshlet.triangle_count, (int)meshlet.vertex_count);
 
                     Cluster cluster = new Cluster();
-                    cluster.indices = new int[meshlet.triangle_count * 3];
+                    cluster.indexStart = (uint)outIndices.Count;
+                    cluster.indexCount = meshlet.triangle_count * 3;
+                    
+                    Vector3 min = vertices[meshlet_vertices[meshlet.vertex_offset + meshlet_triangles[meshlet.triangle_offset]]];
+                    Vector3 max = min;
+
                     for (int j = 0; j < meshlet.triangle_count * 3; ++j)
                     {
-                        cluster.indices[j] = meshlet_vertices[meshlet.vertex_offset + meshlet_triangles[meshlet.triangle_offset + j]];
+                        uint vIdx = (uint)meshlet_vertices[meshlet.vertex_offset + meshlet_triangles[meshlet.triangle_offset + j]];
+                        outIndices.Add(vIdx);
+                        
+                        Vector3 v = vertices[vIdx];
+                        min = Vector3.Min(min, v);
+                        max = Vector3.Max(max, v);
                     }
 
-                    cluster.parent.error = float.MaxValue;
-                    cluster.materialID = materialID; // 记录材质ID
+                    cluster.boundsCenter = (min + max) * 0.5f;
+                    cluster.boundsRadius = (max - min).magnitude * 0.5f;
+                    cluster.error = float.MaxValue;
+                    cluster.materialID = materialID; 
+                    cluster.mipLevel = 0;
+                    
                     clusters.Add(cluster);
                 }
                 return clusters;
@@ -153,13 +168,13 @@ namespace UnityNanite
                 }
 
                 // Find closest cluster
-                Vector3 currentCenter = clusters[currentGroup[currentGroup.Count - 1]].self.center;
+                Vector3 currentCenter = clusters[currentGroup[currentGroup.Count - 1]].boundsCenter;
                 int bestIdx = -1;
                 float bestDistSq = float.MaxValue;
 
                 for (int i = 0; i < unvisited.Count; i++)
                 {
-                    float distSq = (clusters[unvisited[i]].self.center - currentCenter).sqrMagnitude;
+                    float distSq = (clusters[unvisited[i]].boundsCenter - currentCenter).sqrMagnitude;
                     if (distSq < bestDistSq)
                     {
                         bestDistSq = distSq;
@@ -235,14 +250,13 @@ namespace UnityNanite
             LODBounds bounds = new LODBounds();
             if (group.Count == 0) return bounds;
 
-            Vector3 min = clusters[group[0]].self.center - Vector3.one * clusters[group[0]].self.radius;
-            Vector3 max = clusters[group[0]].self.center + Vector3.one * clusters[group[0]].self.radius;
+            Vector3 min = clusters[group[0]].boundsCenter - Vector3.one * clusters[group[0]].boundsRadius;
+            Vector3 max = clusters[group[0]].boundsCenter + Vector3.one * clusters[group[0]].boundsRadius;
 
             for (int i = 1; i < group.Count; i++)
             {
-                LODBounds cBounds = clusters[group[i]].self;
-                Vector3 cMin = cBounds.center - Vector3.one * cBounds.radius;
-                Vector3 cMax = cBounds.center + Vector3.one * cBounds.radius;
+                Vector3 cMin = clusters[group[i]].boundsCenter - Vector3.one * clusters[group[i]].boundsRadius;
+                Vector3 cMax = clusters[group[i]].boundsCenter + Vector3.one * clusters[group[i]].boundsRadius;
                 min = Vector3.Min(min, cMin);
                 max = Vector3.Max(max, cMax);
             }
@@ -257,18 +271,14 @@ namespace UnityNanite
             // See Zhihu article implementation
             NaniteSubMesh res = new NaniteSubMesh();
             List<ClusterGroup> clusterGroupList = new List<ClusterGroup>();
-            var clusters = Clusterize(vertices, indices);
-            res.clusterList = clusters;
-            res.clusterGroupList = clusterGroupList;
-            res.maxMipLevel = 0;
+            List<uint> globalIndices;
+            var clusters = Clusterize(vertices, indices, out globalIndices);
             
-            for (int i = 0; i < clusters.Count; ++i)
-            {
-                var c = clusters[i];
-                c.self = Bounds(vertices, clusters[i].indices, 0f);
-                c.mip = 0;
-                clusters[i] = c;
-            }
+            res.vertices = vertices;
+            res.indices = globalIndices.ToArray();
+            res.clusters = clusters.ToArray();
+            res.clusterGroups = clusterGroupList.ToArray();
+            res.maxMipLevel = 0;
 
             List<int> pending = new List<int>(clusters.Count);
             int[] remap = new int[vertices.Length];
