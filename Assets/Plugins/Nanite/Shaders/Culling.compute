@@ -96,17 +96,20 @@ float CalculateScreenError(float3 center, float radius, float error)
     return screenError;
 }
 
-float3 SkinVertex(uint vIdx, float3 pos)
+float3 SkinVertex(uint vertexIndex, float3 pos)
 {
     if (_IsSkinned == 0) return pos;
-    
-    NaniteSkinWeight bw = _BoneWeights[vIdx];
+
+    NaniteSkinWeight bw = _BoneWeights[vertexIndex];
     float4x4 m = _BoneMatrices[bw.i0] * bw.w0 +
                  _BoneMatrices[bw.i1] * bw.w1 +
                  _BoneMatrices[bw.i2] * bw.w2 +
                  _BoneMatrices[bw.i3] * bw.w3;
                  
-    return mul(m, float4(pos, 1.0)).xyz;
+    // In Unity, matrices in StructuredBuffers are stored column-major.
+    // Reading them as float4x4 in HLSL gives the transposed matrix.
+    // Therefore, we must use mul(vector, matrix) instead of mul(matrix, vector).
+    return mul(float4(pos, 1.0), m).xyz;
 }
 
 [numthreads(64, 1, 1)]
