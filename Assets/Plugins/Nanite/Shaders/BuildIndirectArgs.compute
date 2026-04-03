@@ -1,0 +1,47 @@
+#pragma kernel BuildIndirectArgsCull
+#pragma kernel BuildIndirectArgsRaster
+#pragma kernel BuildIndirectArgsDraw
+
+// Argument buffer layout:
+// Dispatch: [threadGroupsX, threadGroupsY, threadGroupsZ]
+// DrawInstanced: [indexCountPerInstance, instanceCount, startIndexLocation, baseVertexLocation, startInstanceLocation]
+
+StructuredBuffer<uint> _VisibleClustersCount;
+StructuredBuffer<uint> _VisibleTrianglesCount;
+StructuredBuffer<uint> _HWIndicesCount;
+
+RWStructuredBuffer<uint> _IndirectCullArgs;
+RWStructuredBuffer<uint> _IndirectRasterArgs;
+RWStructuredBuffer<uint> _IndirectDrawArgs;
+
+[numthreads(1, 1, 1)]
+void BuildIndirectArgsCull (uint3 id : SV_DispatchThreadID)
+{
+    // Culling is dispatched with 64 threads per group
+    uint count = _VisibleClustersCount[0];
+    _IndirectCullArgs[0] = (count + 63) / 64;
+    _IndirectCullArgs[1] = 1;
+    _IndirectCullArgs[2] = 1;
+}
+
+[numthreads(1, 1, 1)]
+void BuildIndirectArgsRaster (uint3 id : SV_DispatchThreadID)
+{
+    // SW Rasterization is dispatched with 64 threads per group (1 thread per triangle)
+    uint count = _VisibleTrianglesCount[0];
+    _IndirectRasterArgs[0] = (count + 63) / 64;
+    _IndirectRasterArgs[1] = 1;
+    _IndirectRasterArgs[2] = 1;
+}
+
+[numthreads(1, 1, 1)]
+void BuildIndirectArgsDraw (uint3 id : SV_DispatchThreadID)
+{
+    // HW Rasterization draws indices
+    uint count = _HWIndicesCount[0];
+    _IndirectDrawArgs[0] = count; // indexCountPerInstance
+    _IndirectDrawArgs[1] = 1;     // instanceCount
+    _IndirectDrawArgs[2] = 0;     // startIndexLocation
+    _IndirectDrawArgs[3] = 0;     // baseVertexLocation
+    _IndirectDrawArgs[4] = 0;     // startInstanceLocation
+}

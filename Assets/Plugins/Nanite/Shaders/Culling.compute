@@ -30,6 +30,7 @@ struct Cluster
     float error;
     uint indexStart;
     uint indexCount;
+    uint materialID; // 新增
 };
 
 // Buffers
@@ -46,9 +47,10 @@ struct VisibleTriangle
     float3 v2;
     uint clusterID;
     uint triID;
+    uint materialID; // 传递给光栅化
 };
 AppendStructuredBuffer<VisibleTriangle> _VisibleTrianglesSW; // For SW rasterization
-// For HW rasterization, we would use an AppendStructuredBuffer<uint> for indices.
+AppendStructuredBuffer<uint> _HWIndicesBuffer; // For HW rasterization
 
 // Camera params
 float4x4 _MatrixVP;
@@ -160,13 +162,15 @@ void CullClusters (uint3 id : SV_DispatchThreadID)
     {
         // 如果未被遮挡
         // 5. 屏幕尺寸判断：决定是走 HW 光栅化还是 SW 软光栅化
-        // if (maxDim > 32.0)
-        // {
-        //     将 Cluster 中的三角形索引追加到 HW 渲染缓冲
-        // }
-        // else
-        // {
-        //     将 Cluster 中的三角形顶点提取并追加到 SW 软光栅化缓冲 (_VisibleTrianglesSW)
-        // }
+        if (maxDim > 32.0)
+        {
+            // 将 Cluster 中的三角形索引追加到 HW 渲染缓冲
+            // 伪代码: _HWIndicesBuffer.Append(index);
+        }
+        else
+        {
+            // 将 Cluster 中的三角形顶点提取并追加到 SW 软光栅化缓冲
+            // 伪代码: _VisibleTrianglesSW.Append(tri);
+        }
     }
 }

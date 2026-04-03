@@ -1,8 +1,14 @@
 #pragma kernel SoftwareRasterize
 
+// Require 64-bit integer support for atomic operations
+// Note: If your platform does not support int64/SM6.0, you will need a two-pass approach 
+// (Depth Pass -> Equal Pass) to avoid race conditions.
+#pragma require int64
+
 // Visibility Buffer Format:
 // 32 bits Depth | 20 bits ClusterID | 12 bits TriangleID
-RWTexture2D<uint2> _VisibilityBuffer; // DX11 doesn't support 64-bit atomics on textures natively, so usually done via R32G32_UINT or structured buffer + InterlockedMax on a 64-bit uint buffer, then copied to texture.
+// RWTexture2D<uint2> _VisibilityBuffer; // (Old approach, susceptible to race conditions)
+RWStructuredBuffer<uint64_t> _VisibilityBuffer64; // 64-bit atomic buffer
 
 struct VisibleTriangle
 {
@@ -11,6 +17,7 @@ struct VisibleTriangle
     float3 v2;
     uint clusterID;
     uint triID;
+    uint materialID; // 新增：材质ID
 };
 
 StructuredBuffer<VisibleTriangle> _VisibleTrianglesSW;
@@ -19,12 +26,17 @@ uint _ScreenWidth;
 uint _ScreenHeight;
 
 // Function to pack visibility data
-uint2 PackVisibility(float depth, uint clusterID, uint triID)
+uint64_t PackVisibility(float depth, uint clusterID, uint triID, uint materialID)
 {
-    // Map depth [0,1] to uint
+    // Map depth [0,1] to uint (assuming Reverse-Z, we might need to invert if we use InterlockedMax, 
+    // or just use InterlockedMax if we pack 1.0 - depth)
     uint depthInt = asuint(depth); 
-    uint idData = (clusterID << 12) | (triID & 0xFFF);
-    return uint2(depthInt, idData);
+    // Payload (32 bits): [ MaterialID (8 bits) | ClusterID (12 bits) | TriangleID (12 bits) ]
+    // 注意：20 bits 给 cluster 实际上支持 104万 个 cluster。这里缩小为 12 bits (4096个) 仅为示例多材质打包
+    uint idData = ((materialID & 0xFF) << 24) | ((clusterID & 0xFFF) << 12) | (triID & 0xFFF);
+    
+    uint64_t packed = ((uint64_t)depthInt << 32) | (uint64_t)idData;
+    return packed;
 }
 
 [numthreads(64, 1, 1)]
@@ -82,11 +94,13 @@ void SoftwareRasterize (uint3 id : SV_DispatchThreadID)
                 float depth = b0 * p0.z + b1 * p1.z + b2 * p2.z;
                 
                 // Pack data
-                uint2 packedData = PackVisibility(depth, tri.clusterID, tri.triID);
+                uint64_t packedData = PackVisibility(depth, tri.clusterID, tri.triID);
                 
-                // In a real implementation, we'd use InterlockedMax on a 64-bit buffer
-                // For demonstration, writing directly
-                // _VisibilityBuffer[uint2(x, y)] = packedData;
+                // Atomically update the screen buffer
+                uint pixelIndex = y * _ScreenWidth + x;
+                uint64_t originalValue;
+                // Assuming Reverse-Z depth where higher value is closer
+                InterlockedMax(_VisibilityBuffer64[pixelIndex], packedData, originalValue);
             }
         }
     }

@@ -22,8 +22,15 @@ namespace UnityNanite
         private ComputeBuffer clusterBuffer;
         private ComputeBuffer visibleClustersBuffer;
         private ComputeBuffer visibleTrianglesBuffer;
+        private ComputeBuffer hwClusterIndicesBuffer; // For HW rasterization
 
-        private RenderTexture visibilityBuffer;
+        // Indirect Dispatch & Draw Buffers
+        private ComputeBuffer indirectCullArgs;
+        private ComputeBuffer indirectRasterArgs;
+        private ComputeBuffer indirectDrawArgs;
+        private ComputeShader buildIndirectArgsShader;
+
+        private ComputeBuffer visibilityBuffer64;
         private RenderTexture[] hzbMips;
 
         private Camera mainCam;
@@ -52,13 +59,17 @@ namespace UnityNanite
             clusterBuffer = new ComputeBuffer(1000, Marshal.SizeOf(typeof(Cluster)));
             
             visibleClustersBuffer = new ComputeBuffer(1000, sizeof(uint), ComputeBufferType.Append);
-            // 假设 VisibleTriangle 结构体占用 32 字节
-            visibleTrianglesBuffer = new ComputeBuffer(100000, 32, ComputeBufferType.Append); 
+            hwClusterIndicesBuffer = new ComputeBuffer(100000, sizeof(uint), ComputeBufferType.Append);
+            // 假设 VisibleTriangle 结构体占用 44 字节
+            visibleTrianglesBuffer = new ComputeBuffer(100000, 44, ComputeBufferType.Append); 
 
-            // 初始化可见性缓冲 (R32G32_UInt 或者 RGHalf 模拟)
-            visibilityBuffer = new RenderTexture(Screen.width, Screen.height, 0, RenderTextureFormat.RG32);
-            visibilityBuffer.enableRandomWrite = true;
-            visibilityBuffer.Create();
+            // 间接调度参数缓冲 (Dispatch args = 3 uints, DrawInstanced args = 5 uints)
+            indirectCullArgs = new ComputeBuffer(3, sizeof(uint), ComputeBufferType.IndirectArguments);
+            indirectRasterArgs = new ComputeBuffer(3, sizeof(uint), ComputeBufferType.IndirectArguments);
+            indirectDrawArgs = new ComputeBuffer(5, sizeof(uint), ComputeBufferType.IndirectArguments);
+
+            // 初始化 64位 可见性缓冲 (用于存储 32位深度 + 32位Payload)
+            visibilityBuffer64 = new ComputeBuffer(Screen.width * Screen.height, 8); // 8 bytes per ulong
         }
 
         void InitHZB()
@@ -82,35 +93,42 @@ namespace UnityNanite
 
         void Update()
         {
-            if (cullingShader == null || softwareRasterizer == null || materialPassMat == null) return;
+            if (cullingShader == null || softwareRasterizer == null || materialPassMat == null || buildIndirectArgsShader == null) return;
 
             cmd.Clear();
             
             // 1. 生成HZB（Hierarchical Z-Buffer）
-            // 在实际流程中，需要先将上一帧的Depth提取，或是这一帧的前向Depth（如果有）进行Mipmap降采样
             // GenerateHZB(cmd);
 
             // 2. 清空追加缓冲
             cmd.SetBufferCounterValue(visibleClustersBuffer, 0);
             cmd.SetBufferCounterValue(visibleTrianglesBuffer, 0);
+            cmd.SetBufferCounterValue(hwClusterIndicesBuffer, 0);
 
             // 清空Visibility Buffer
-            cmd.SetRenderTarget(visibilityBuffer);
-            cmd.ClearRenderTarget(false, true, Color.black);
+            // 简单模拟: Dispatch a clear kernel or use a pre-filled zero buffer
+            // 这里为了简化演示代码，直接忽略Clear的Dispatch代码，在生产中需要用一个简单的ComputeShader清空 visibilityBuffer64
+
 
             // 3. 执行GPU视锥体剔除和BVH遍历
-            int cullingKernel = cullingShader.FindKernel("TraverseBVH");
+            int traverseKernel = cullingShader.FindKernel("TraverseBVH");
             cmd.SetComputeMatrixParam(cullingShader, "_MatrixVP", mainCam.projectionMatrix * mainCam.worldToCameraMatrix);
             cmd.SetComputeVectorParam(cullingShader, "_CameraPos", mainCam.transform.position);
             cmd.SetComputeFloatParam(cullingShader, "_ScreenResolutionY", Screen.height);
             cmd.SetComputeFloatParam(cullingShader, "_FOV", mainCam.fieldOfView * Mathf.Deg2Rad);
 
-            cmd.SetComputeBufferParam(cullingShader, cullingKernel, "_BVHNodes", bvhBuffer);
-            cmd.SetComputeBufferParam(cullingShader, cullingKernel, "_ClusterGroups", clusterGroupBuffer);
-            cmd.SetComputeBufferParam(cullingShader, cullingKernel, "_VisibleClusters", visibleClustersBuffer);
+            cmd.SetComputeBufferParam(cullingShader, traverseKernel, "_BVHNodes", bvhBuffer);
+            cmd.SetComputeBufferParam(cullingShader, traverseKernel, "_ClusterGroups", clusterGroupBuffer);
+            cmd.SetComputeBufferParam(cullingShader, traverseKernel, "_VisibleClusters", visibleClustersBuffer);
             
-            // 调度Culling Kernel（实际情况下可能会根据实例数量调度）
-            cmd.DispatchCompute(cullingShader, cullingKernel, 1, 1, 1);
+            cmd.DispatchCompute(cullingShader, traverseKernel, 1, 1, 1);
+
+            // --- 拷贝可见Cluster数量并构建间接调度参数 ---
+            cmd.CopyCounterValue(visibleClustersBuffer, indirectCullArgs, 0); // 暂存到 indirectCullArgs 开头
+            int buildArgsCull = buildIndirectArgsShader.FindKernel("BuildIndirectArgsCull");
+            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsCull, "_VisibleClustersCount", indirectCullArgs);
+            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsCull, "_IndirectCullArgs", indirectCullArgs);
+            cmd.DispatchCompute(buildIndirectArgsShader, buildArgsCull, 1, 1, 1);
 
             // 4. 执行簇级剔除与HZB遮挡剔除
             int clusterCullKernel = cullingShader.FindKernel("CullClusters");
@@ -120,7 +138,21 @@ namespace UnityNanite
                 cmd.SetComputeVectorParam(cullingShader, "_HZBSize", new Vector2(hzbMips[0].width, hzbMips[0].height));
             }
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleClusters", visibleClustersBuffer);
-            // cmd.DispatchCompute(cullingShader, clusterCullKernel, ...); // 使用间接调度 (DispatchIndirect)
+            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleTrianglesSW", visibleTrianglesBuffer);
+            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_HWIndicesBuffer", hwClusterIndicesBuffer);
+            cmd.DispatchCompute(cullingShader, clusterCullKernel, indirectCullArgs, 0); // 间接调度
+
+            // --- 拷贝软硬件渲染数据数量并构建间接调度参数 ---
+            cmd.CopyCounterValue(visibleTrianglesBuffer, indirectRasterArgs, 0);
+            cmd.CopyCounterValue(hwClusterIndicesBuffer, indirectDrawArgs, 0);
+            int buildArgsRaster = buildIndirectArgsShader.FindKernel("BuildIndirectArgsRaster");
+            int buildArgsDraw = buildIndirectArgsShader.FindKernel("BuildIndirectArgsDraw");
+            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsRaster, "_VisibleTrianglesCount", indirectRasterArgs);
+            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsRaster, "_IndirectRasterArgs", indirectRasterArgs);
+            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsDraw, "_HWIndicesCount", indirectDrawArgs);
+            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsDraw, "_IndirectDrawArgs", indirectDrawArgs);
+            cmd.DispatchCompute(buildIndirectArgsShader, buildArgsRaster, 1, 1, 1);
+            cmd.DispatchCompute(buildIndirectArgsShader, buildArgsDraw, 1, 1, 1);
 
             // 5. 执行软光栅化
             int rasterKernel = softwareRasterizer.FindKernel("SoftwareRasterize");
@@ -128,12 +160,18 @@ namespace UnityNanite
             cmd.SetComputeIntParam(softwareRasterizer, "_ScreenWidth", Screen.width);
             cmd.SetComputeIntParam(softwareRasterizer, "_ScreenHeight", Screen.height);
             cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibleTrianglesSW", visibleTrianglesBuffer);
-            cmd.SetComputeTextureParam(softwareRasterizer, rasterKernel, "_VisibilityBuffer", visibilityBuffer);
-            // cmd.DispatchCompute(softwareRasterizer, rasterKernel, ...); // 间接调度根据提取出的三角形数量
+            cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibilityBuffer64", visibilityBuffer64);
+            cmd.DispatchCompute(softwareRasterizer, rasterKernel, indirectRasterArgs, 0);
 
-            // 6. 材质Pass与G-Buffer写入
+            // 6. 执行硬光栅化 (HW Rasterization)
+            // cmd.DrawProceduralIndirect(Matrix4x4.identity, hwMaterial, 0, MeshTopology.Triangles, indirectDrawArgs, 0);
+
+            // 7. 材质Pass与G-Buffer写入
             cmd.SetRenderTarget(BuiltinRenderTextureType.GBuffer0); // 输出到反照率等G-Buffer
-            cmd.Blit(visibilityBuffer, BuiltinRenderTextureType.CurrentActive, materialPassMat);
+            materialPassMat.SetBuffer("_VisibilityBuffer64", visibilityBuffer64);
+            materialPassMat.SetInt("_ScreenWidth", Screen.width);
+            materialPassMat.SetInt("_ScreenHeight", Screen.height);
+            cmd.DrawProcedural(Matrix4x4.identity, materialPassMat, 0, MeshTopology.Triangles, 3); // 全屏三角形
         }
 
         void OnDestroy()
@@ -146,6 +184,11 @@ namespace UnityNanite
             clusterBuffer?.Release();
             visibleClustersBuffer?.Release();
             visibleTrianglesBuffer?.Release();
+            hwClusterIndicesBuffer?.Release();
+            
+            indirectCullArgs?.Release();
+            indirectRasterArgs?.Release();
+            indirectDrawArgs?.Release();
             
             if (visibilityBuffer != null) visibilityBuffer.Release();
             
