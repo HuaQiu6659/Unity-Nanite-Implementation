@@ -168,20 +168,20 @@ namespace UnityNanite
             int maxClusters = clusters.Length;
             int maxTriangles = indices.Length / 3;
 
-            if (visibleClustersBuffer != null && visibleClustersBuffer.count < maxClusters)
+            if (visibleClustersBuffer == null || visibleClustersBuffer.count < maxClusters)
             {
-                visibleClustersBuffer.Release();
-                visibleClustersBuffer = new ComputeBuffer(maxClusters, sizeof(uint), ComputeBufferType.Append);
+                visibleClustersBuffer?.Release();
+                visibleClustersBuffer = new ComputeBuffer(Mathf.Max(1000, maxClusters), sizeof(uint), ComputeBufferType.Append);
             }
-            if (hwClusterIndicesBuffer != null && hwClusterIndicesBuffer.count < maxClusters)
+            if (hwClusterIndicesBuffer == null || hwClusterIndicesBuffer.count < maxClusters)
             {
-                hwClusterIndicesBuffer.Release();
-                hwClusterIndicesBuffer = new ComputeBuffer(maxClusters, sizeof(uint), ComputeBufferType.Append);
+                hwClusterIndicesBuffer?.Release();
+                hwClusterIndicesBuffer = new ComputeBuffer(Mathf.Max(100000, maxClusters), sizeof(uint), ComputeBufferType.Append);
             }
-            if (visibleTrianglesBuffer != null && visibleTrianglesBuffer.count < maxTriangles)
+            if (visibleTrianglesBuffer == null || visibleTrianglesBuffer.count < maxTriangles)
             {
-                visibleTrianglesBuffer.Release();
-                visibleTrianglesBuffer = new ComputeBuffer(maxTriangles, 44, ComputeBufferType.Append); // 44 bytes = float3(12)*3 + uint(4)*2
+                visibleTrianglesBuffer?.Release();
+                visibleTrianglesBuffer = new ComputeBuffer(Mathf.Max(100000, maxTriangles), 44, ComputeBufferType.Append); // 44 bytes = float3(12)*3 + uint(4)*2
             }
         }
 
@@ -190,19 +190,18 @@ namespace UnityNanite
             // 初始化缓冲大小（在实际工程中根据加载的模型大小动态分配）
             // 注意：真实模型数据现在通过 LoadModelData 注入，这里只初始化动态追加缓冲和参数缓冲
             
-            visibleClustersBuffer = new ComputeBuffer(1000, sizeof(uint), ComputeBufferType.Append);
-            hwClusterIndicesBuffer = new ComputeBuffer(100000, sizeof(uint), ComputeBufferType.Append);
-            // 假设 VisibleTriangle 结构体占用 44 字节
-            visibleTrianglesBuffer = new ComputeBuffer(100000, 44, ComputeBufferType.Append); 
+            if (visibleClustersBuffer == null) visibleClustersBuffer = new ComputeBuffer(1000, sizeof(uint), ComputeBufferType.Append);
+            if (hwClusterIndicesBuffer == null) hwClusterIndicesBuffer = new ComputeBuffer(100000, sizeof(uint), ComputeBufferType.Append);
+            if (visibleTrianglesBuffer == null) visibleTrianglesBuffer = new ComputeBuffer(100000, 44, ComputeBufferType.Append); 
 
             // 间接调度参数缓冲 (Dispatch args = 3 uints, DrawInstanced args = 5 uints)
             indirectCullArgs = new ComputeBuffer(3, sizeof(uint), ComputeBufferType.IndirectArguments);
             indirectRasterArgs = new ComputeBuffer(3, sizeof(uint), ComputeBufferType.IndirectArguments);
             indirectDrawArgs = new ComputeBuffer(5, sizeof(uint), ComputeBufferType.IndirectArguments);
 
-            // 计数器保存缓冲
-            visibleClustersCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
-            visibleTrianglesCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
+            // 计数器保存缓冲 (改为 IndirectArguments 以防止 DX11 下 StructuredBuffer 绑定报错)
+            visibleClustersCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.IndirectArguments);
+            visibleTrianglesCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.IndirectArguments);
 
             // Dummy skinning buffers to prevent D3D11 unbound buffer warnings
             dummySkinWeightBuffer = new ComputeBuffer(1, Marshal.SizeOf(typeof(NaniteSkinWeight)));

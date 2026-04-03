@@ -50,10 +50,6 @@ Shader "Hidden/Nanite/MaterialPass"
                 o.vertex = float4(uv * 2.0f - 1.0f, 0.0f, 1.0f);
                 o.uv = uv;
                 
-                #if UNITY_UV_STARTS_AT_TOP
-                o.uv.y = 1.0 - o.uv.y;
-                #endif
-                
                 return o;
             }
 
