@@ -7,11 +7,13 @@ namespace UnityNanite
 {
     public struct Cluster
     {
-        public int[] indices;
-        public LODBounds self;
-        public LODBounds parent;
-        public int mip;
-        public uint materialID; // 新增：用于多材质映射
+        public Vector3 boundsCenter;
+        public float boundsRadius;
+        public float error;
+        public uint indexStart;
+        public uint indexCount;
+        public uint materialID; // 用于多材质映射
+        public uint mipLevel;   // 用于LOD染色和水印
     }
 
     public struct LODBounds
@@ -23,12 +25,13 @@ namespace UnityNanite
 
     public struct ClusterGroup
     {
-        public List<int> Children;
-        public Vector3 Bounds;
+        public Vector3 bounds;
         public float radius;
-        public float MinLODError;
-        public float MaxParentLODError;
-        public int MipLevel;
+        public float minLODError;
+        public float maxParentLODError;
+        public int mipLevel;
+        public uint childStart;
+        public uint childCount;
     }
 
     public class NaniteSubMesh

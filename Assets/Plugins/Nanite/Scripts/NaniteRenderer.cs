@@ -42,6 +42,11 @@ namespace UnityNanite
         private ComputeBuffer visibilityBuffer64;
         private RenderTexture[] hzbMips;
 
+        // Global Mesh Data
+        private ComputeBuffer vertexBuffer;
+        private ComputeBuffer indexBuffer;
+        private ComputeBuffer visibleClustersCountBuffer;
+
         private Camera mainCam;
 
         void Start()
@@ -79,6 +84,13 @@ namespace UnityNanite
 
             // 初始化 64位 可见性缓冲 (用于存储 32位深度 + 32位Payload)
             visibilityBuffer64 = new ComputeBuffer(Screen.width * Screen.height, 8); // 8 bytes per ulong
+            
+            // 计数器保存缓冲
+            visibleClustersCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
+            
+            // 模拟Mesh数据缓冲 (实际项目中应从 Mesh 获取)
+            vertexBuffer = new ComputeBuffer(1000, 12);
+            indexBuffer = new ComputeBuffer(3000, 4);
         }
 
         void InitHZB()
@@ -134,8 +146,10 @@ namespace UnityNanite
 
             // --- 拷贝可见Cluster数量并构建间接调度参数 ---
             cmd.CopyCounterValue(visibleClustersBuffer, indirectCullArgs, 0); // 暂存到 indirectCullArgs 开头
+            cmd.CopyCounterValue(visibleClustersBuffer, visibleClustersCountBuffer, 0); // 暂存一个只读备份
+
             int buildArgsCull = buildIndirectArgsShader.FindKernel("BuildIndirectArgsCull");
-            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsCull, "_VisibleClustersCount", indirectCullArgs);
+            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsCull, "_VisibleClustersCount", visibleClustersCountBuffer);
             cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsCull, "_IndirectCullArgs", indirectCullArgs);
             cmd.DispatchCompute(buildIndirectArgsShader, buildArgsCull, 1, 1, 1);
 
@@ -147,6 +161,12 @@ namespace UnityNanite
                 cmd.SetComputeVectorParam(cullingShader, "_HZBSize", new Vector2(hzbMips[0].width, hzbMips[0].height));
             }
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleClusters", visibleClustersBuffer);
+            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleClustersCount", visibleClustersCountBuffer);
+            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Clusters", clusterBuffer);
+            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Vertices", vertexBuffer);
+            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Indices", indexBuffer);
+            cmd.SetComputeMatrixParam(cullingShader, "_ObjectToWorld", transform.localToWorldMatrix);
+
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleTrianglesSW", visibleTrianglesBuffer);
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_HWIndicesBuffer", hwClusterIndicesBuffer);
             cmd.DispatchCompute(cullingShader, clusterCullKernel, indirectCullArgs, 0); // 间接调度
@@ -210,8 +230,12 @@ namespace UnityNanite
             indirectCullArgs?.Release();
             indirectRasterArgs?.Release();
             indirectDrawArgs?.Release();
+
+            visibleClustersCountBuffer?.Release();
+            vertexBuffer?.Release();
+            indexBuffer?.Release();
             
-            if (visibilityBuffer != null) visibilityBuffer.Release();
+            if (visibilityBuffer64 != null) visibilityBuffer64.Release();
             
             if (hzbMips != null)
             {
