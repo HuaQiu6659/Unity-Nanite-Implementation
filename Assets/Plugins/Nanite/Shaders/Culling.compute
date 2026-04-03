@@ -31,8 +31,9 @@ struct Cluster
     uint indexStart;
     uint indexCount;
     uint materialID; 
-    uint mipLevel; // 新增：保存当前的LOD层级
+    uint mipLevel;
 };
+StructuredBuffer<Cluster> _Clusters;
 
 // Buffers
 StructuredBuffer<BVHNode> _BVHNodes;

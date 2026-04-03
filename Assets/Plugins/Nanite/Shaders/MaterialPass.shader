@@ -14,7 +14,6 @@ Shader "Hidden/Nanite/MaterialPass"
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
-            #pragma require int64 // Require SM 6.0 64-bit int support
             #include "UnityCG.cginc"
 
             struct appdata
@@ -35,7 +34,8 @@ Shader "Hidden/Nanite/MaterialPass"
             };
 
             // Texture2D<uint2> _VisibilityTex; // Old 2D approach
-            StructuredBuffer<uint64_t> _VisibilityBuffer64; // New 64-bit linear buffer
+            StructuredBuffer<uint> _DepthBuffer;
+            StructuredBuffer<uint> _PayloadBuffer;
 
             // Buffers to fetch vertex data
             // StructuredBuffer<Vertex> _Vertices;
@@ -80,16 +80,16 @@ Shader "Hidden/Nanite/MaterialPass"
                 uint y = (uint)(i.uv.y * _ScreenHeight);
                 uint pixelIndex = y * _ScreenWidth + x;
 
-                uint64_t visData = _VisibilityBuffer64[pixelIndex];
+                uint depthInt = _DepthBuffer[pixelIndex];
                 
-                if (visData == 0) discard;
+                if (depthInt == 0) discard;
 
-                uint payload = (uint)(visData & 0xFFFFFFFF);
+                uint payload = _PayloadBuffer[pixelIndex];
                 uint mipLevel   = (payload >> 28) & 0xF;
                 uint materialID = (payload >> 24) & 0xF;
                 uint clusterID  = (payload >> 12) & 0xFFF;
                 uint triID      = payload & 0xFFF;
-                float depth     = asfloat((uint)(visData >> 32)); // Decode depth
+                float depth     = asfloat(depthInt); // Decode depth
                 
                 float3 albedo = float3(0.0, 0.0, 0.0);
 

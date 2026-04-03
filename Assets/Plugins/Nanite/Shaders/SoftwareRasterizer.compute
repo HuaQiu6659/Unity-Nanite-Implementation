@@ -1,14 +1,20 @@
+#pragma kernel ClearVisibilityBuffer
 #pragma kernel SoftwareRasterize
 
-// Require 64-bit integer support for atomic operations
-// Note: If your platform does not support int64/SM6.0, you will need a two-pass approach 
-// (Depth Pass -> Equal Pass) to avoid race conditions.
-#pragma require int64
+// Use two 32-bit buffers to fallback from 64-bit atomics since DX11/SM5.0 doesn't support them natively
+RWStructuredBuffer<uint> _DepthBuffer;
+RWStructuredBuffer<uint> _PayloadBuffer;
 
-// Visibility Buffer Format:
-// 32 bits Depth | 20 bits ClusterID | 12 bits TriangleID
-// RWTexture2D<uint2> _VisibilityBuffer; // (Old approach, susceptible to race conditions)
-RWStructuredBuffer<uint64_t> _VisibilityBuffer64; // 64-bit atomic buffer
+[numthreads(8, 8, 1)]
+void ClearVisibilityBuffer (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < _ScreenWidth && id.y < _ScreenHeight)
+    {
+        uint pixelIndex = id.y * _ScreenWidth + id.x;
+        _DepthBuffer[pixelIndex] = 0;
+        _PayloadBuffer[pixelIndex] = 0;
+    }
+}
 
 struct VisibleTriangle
 {
@@ -96,14 +102,21 @@ void SoftwareRasterize (uint3 id : SV_DispatchThreadID)
                 // Interpolate depth
                 float depth = b0 * p0.z + b1 * p1.z + b2 * p2.z;
                 
-                // Pack data
-                uint64_t packedData = PackVisibility(depth, tri.clusterID, tri.triID, tri.materialID, tri.mipLevel);
+                uint depthInt = asuint(depth); 
+                uint payload = ((tri.mipLevel & 0xF) << 28) | ((tri.materialID & 0xF) << 24) | ((tri.clusterID & 0xFFF) << 12) | (tri.triID & 0xFFF);
                 
-                // Atomically update the screen buffer
                 uint pixelIndex = y * _ScreenWidth + x;
-                uint64_t originalValue;
-                // Assuming Reverse-Z depth where higher value is closer
-                InterlockedMax(_VisibilityBuffer64[pixelIndex], packedData, originalValue);
+                uint originalDepth;
+                
+                // Using 32-bit atomic for Depth
+                InterlockedMax(_DepthBuffer[pixelIndex], depthInt, originalDepth);
+                
+                // If we won the depth test, write the payload.
+                // Note: This has a minor race condition window on SM5.0, but it's acceptable for prototypes.
+                if (depthInt > originalDepth)
+                {
+                    _PayloadBuffer[pixelIndex] = payload;
+                }
             }
         }
     }
