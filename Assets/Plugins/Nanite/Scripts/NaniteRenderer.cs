@@ -53,7 +53,7 @@ namespace UnityNanite
         private ComputeBuffer indirectCullArgs;
         private ComputeBuffer indirectRasterArgs;
         private ComputeBuffer indirectDrawArgs;
-        private ComputeShader buildIndirectArgsShader;
+        public ComputeShader buildIndirectArgsShader;
 
         private ComputeBuffer depthBuffer;
         private ComputeBuffer payloadBuffer;
@@ -208,17 +208,17 @@ namespace UnityNanite
             if (visibleTrianglesBuffer == null) visibleTrianglesBuffer = new ComputeBuffer(100000, 44, ComputeBufferType.Append); 
 
             // 间接调度参数缓冲 (Dispatch args = 3 uints, DrawInstanced args = 5 uints)
-            indirectCullArgs = new ComputeBuffer(3, sizeof(uint), ComputeBufferType.IndirectArguments);
-            indirectRasterArgs = new ComputeBuffer(3, sizeof(uint), ComputeBufferType.IndirectArguments);
-            indirectDrawArgs = new ComputeBuffer(5, sizeof(uint), ComputeBufferType.IndirectArguments);
+            if (indirectCullArgs == null) indirectCullArgs = new ComputeBuffer(3, sizeof(uint), ComputeBufferType.IndirectArguments);
+            if (indirectRasterArgs == null) indirectRasterArgs = new ComputeBuffer(3, sizeof(uint), ComputeBufferType.IndirectArguments);
+            if (indirectDrawArgs == null) indirectDrawArgs = new ComputeBuffer(5, sizeof(uint), ComputeBufferType.IndirectArguments);
 
             // 计数器保存缓冲 (改为 IndirectArguments 以防止 DX11 下 StructuredBuffer 绑定报错)
-            visibleClustersCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.IndirectArguments);
-            visibleTrianglesCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.IndirectArguments);
+            if (visibleClustersCountBuffer == null) visibleClustersCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.IndirectArguments);
+            if (visibleTrianglesCountBuffer == null) visibleTrianglesCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.IndirectArguments);
 
             // Dummy skinning buffers to prevent D3D11 unbound buffer warnings
-            dummySkinWeightBuffer = new ComputeBuffer(1, Marshal.SizeOf(typeof(NaniteSkinWeight)));
-            dummyBoneMatrixBuffer = new ComputeBuffer(1, Marshal.SizeOf(typeof(Matrix4x4)));
+            if (dummySkinWeightBuffer == null) dummySkinWeightBuffer = new ComputeBuffer(1, Marshal.SizeOf(typeof(NaniteSkinWeight)));
+            if (dummyBoneMatrixBuffer == null) dummyBoneMatrixBuffer = new ComputeBuffer(1, Marshal.SizeOf(typeof(Matrix4x4)));
         }
 
         void InitHZB(Camera cam)
@@ -257,7 +257,7 @@ namespace UnityNanite
             if (!IsReady()) return;
 
             // Initialize buffers if not created
-            if (visibleClustersBuffer == null) InitBuffers();
+            if (visibleClustersCountBuffer == null) InitBuffers();
 
             if (depthBuffer == null || depthBuffer.count != camera.pixelWidth * camera.pixelHeight)
             {
