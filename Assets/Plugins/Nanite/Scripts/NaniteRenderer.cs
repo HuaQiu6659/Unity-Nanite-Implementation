@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.Rendering; // 新增：用于 URP/HDRP 的 RenderPipelineManager
 
+using UnityEngine.Rendering.Universal;
+
 namespace UnityNanite
 {
     [System.Serializable]
@@ -76,8 +78,13 @@ namespace UnityNanite
         private Camera mainCam;
         private Vector4[] colorArrayCache = new Vector4[8]; // 缓存：消除每帧 new Vector4[8] 的 GC
 
-        private int lastScreenWidth = 0;
-        private int lastScreenHeight = 0;
+        // 标识当前系统是否使用 URP Feature 驱动
+        private bool isURPFeatureDriven = false;
+
+        public bool IsReady()
+        {
+            return cullingShader != null && softwareRasterizer != null && materialPassMat != null && buildIndirectArgsShader != null && bvhBuffer != null && bvhBuffer.IsValid();
+        }
 
         void Start()
         {
@@ -92,30 +99,33 @@ namespace UnityNanite
             if (compShader != null)
                 compositeMat = new Material(compShader);
 
-            lastScreenWidth = Screen.width;
-            lastScreenHeight = Screen.height;
-
-            InitScreenBuffers();
-            InitBuffers();
-            InitHZB();
-            
-            if (GraphicsSettings.renderPipelineAsset != null)
+            // 检查当前是否在 URP 环境下，并且用户已经添加了 Feature
+            if (GraphicsSettings.renderPipelineAsset != null && GraphicsSettings.renderPipelineAsset.GetType().Name.Contains("Universal"))
             {
-                RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
+                isURPFeatureDriven = true;
+            }
+            
+            if (!isURPFeatureDriven)
+            {
+                // 如果不是 URP Feature 驱动（比如 Built-in 或 HDRP），继续使用 Overlay 方式
+                if (GraphicsSettings.renderPipelineAsset != null)
+                {
+                    RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
+                }
             }
         }
 
-        void InitScreenBuffers()
+        void InitScreenBuffers(Camera cam)
         {
             if (naniteOutput != null) naniteOutput.Release();
-            naniteOutput = new RenderTexture(lastScreenWidth, lastScreenHeight, 24, RenderTextureFormat.ARGB32);
+            naniteOutput = new RenderTexture(cam.pixelWidth, cam.pixelHeight, 24, RenderTextureFormat.ARGB32);
             naniteOutput.enableRandomWrite = true;
             naniteOutput.Create();
 
             if (depthBuffer != null) depthBuffer.Release();
             if (payloadBuffer != null) payloadBuffer.Release();
-            depthBuffer = new ComputeBuffer(lastScreenWidth * lastScreenHeight, 4);
-            payloadBuffer = new ComputeBuffer(lastScreenWidth * lastScreenHeight, 4);
+            depthBuffer = new ComputeBuffer(cam.pixelWidth * cam.pixelHeight, 4);
+            payloadBuffer = new ComputeBuffer(cam.pixelWidth * cam.pixelHeight, 4);
         }
 
         void OnDisable()
@@ -208,10 +218,10 @@ namespace UnityNanite
             dummyBoneMatrixBuffer = new ComputeBuffer(1, Marshal.SizeOf(typeof(Matrix4x4)));
         }
 
-        void InitHZB()
+        void InitHZB(Camera cam)
         {
-            int hzbWidth = Mathf.NextPowerOfTwo(Screen.width) / 2;
-            int hzbHeight = Mathf.NextPowerOfTwo(Screen.height) / 2;
+            int hzbWidth = Mathf.NextPowerOfTwo(cam.pixelWidth) / 2;
+            int hzbHeight = Mathf.NextPowerOfTwo(cam.pixelHeight) / 2;
             int mipCount = (int)Mathf.Log(Mathf.Max(hzbWidth, hzbHeight), 2) + 1;
 
             hzbMips = new RenderTexture[mipCount];
@@ -229,15 +239,27 @@ namespace UnityNanite
 
         void Update()
         {
-            if (cullingShader == null || softwareRasterizer == null || materialPassMat == null || buildIndirectArgsShader == null) return;
-            if (bvhBuffer == null || !bvhBuffer.IsValid()) return; // 防止未 LoadModelData 时报错
+            if (isURPFeatureDriven) return; // 如果被 URP Feature 托管，则在 ExecuteNanitePass 中执行
+            
+            if (!IsReady()) return;
 
-            if (Screen.width != lastScreenWidth || Screen.height != lastScreenHeight)
+            ExecuteNanitePass(cmd, mainCam, naniteOutput, naniteOutput);
+
+            // 立刻执行管线 (此时 Nanite 的结果已渲染到 naniteOutput 中)
+            Graphics.ExecuteCommandBuffer(cmd);
+        }
+
+        public void ExecuteNanitePass(CommandBuffer cmdBuffer, Camera camera, RenderTargetIdentifier colorTarget, RenderTargetIdentifier depthTarget)
+        {
+            if (!IsReady()) return;
+
+            // Initialize buffers if not created
+            if (visibleClustersBuffer == null) InitBuffers();
+
+            if (depthBuffer == null || depthBuffer.count != camera.pixelWidth * camera.pixelHeight)
             {
-                lastScreenWidth = Screen.width;
-                lastScreenHeight = Screen.height;
-                InitScreenBuffers();
-                InitHZB();
+                InitScreenBuffers(camera);
+                InitHZB(camera);
             }
 
             if (isSkinned && bones != null && bindposes != null)
@@ -250,104 +272,108 @@ namespace UnityNanite
                 boneMatrixBuffer.SetData(boneMatrixCache);
             }
 
-            cmd.Clear();
+            cmdBuffer.Clear();
             
             // 1. 生成HZB（Hierarchical Z-Buffer）
-            // GenerateHZB(cmd);
+            // GenerateHZB(cmdBuffer);
 
             // 2. 清空追加缓冲
-            cmd.SetBufferCounterValue(visibleClustersBuffer, 0);
-            cmd.SetBufferCounterValue(visibleTrianglesBuffer, 0);
-            cmd.SetBufferCounterValue(hwClusterIndicesBuffer, 0);
+            cmdBuffer.SetBufferCounterValue(visibleClustersBuffer, 0);
+            cmdBuffer.SetBufferCounterValue(visibleTrianglesBuffer, 0);
+            cmdBuffer.SetBufferCounterValue(hwClusterIndicesBuffer, 0);
 
             // 清空Visibility Buffer
             int clearKernel = softwareRasterizer.FindKernel("ClearVisibilityBuffer");
-            cmd.SetComputeIntParam(softwareRasterizer, "_RasterScreenWidth", Screen.width);
-            cmd.SetComputeIntParam(softwareRasterizer, "_RasterScreenHeight", Screen.height);
-            cmd.SetComputeBufferParam(softwareRasterizer, clearKernel, "_DepthBuffer", depthBuffer);
-            cmd.SetComputeBufferParam(softwareRasterizer, clearKernel, "_PayloadBuffer", payloadBuffer);
-            cmd.DispatchCompute(softwareRasterizer, clearKernel, Mathf.CeilToInt(Screen.width / 8f), Mathf.CeilToInt(Screen.height / 8f), 1);
+            cmdBuffer.SetComputeIntParam(softwareRasterizer, "_RasterScreenWidth", camera.pixelWidth);
+            cmdBuffer.SetComputeIntParam(softwareRasterizer, "_RasterScreenHeight", camera.pixelHeight);
+            cmdBuffer.SetComputeBufferParam(softwareRasterizer, clearKernel, "_DepthBuffer", depthBuffer);
+            cmdBuffer.SetComputeBufferParam(softwareRasterizer, clearKernel, "_PayloadBuffer", payloadBuffer);
+            cmdBuffer.DispatchCompute(softwareRasterizer, clearKernel, Mathf.CeilToInt(camera.pixelWidth / 8f), Mathf.CeilToInt(camera.pixelHeight / 8f), 1);
 
 
             // 3. 执行GPU视锥体剔除和BVH遍历
             int traverseKernel = cullingShader.FindKernel("TraverseBVH");
-            cmd.SetComputeMatrixParam(cullingShader, "_MatrixVP", mainCam.projectionMatrix * mainCam.worldToCameraMatrix);
-            cmd.SetComputeVectorParam(cullingShader, "_CameraPos", mainCam.transform.position);
-            cmd.SetComputeFloatParam(cullingShader, "_ScreenResolutionY", Screen.height);
-            cmd.SetComputeFloatParam(cullingShader, "_FOV", mainCam.fieldOfView * Mathf.Deg2Rad);
+            cmdBuffer.SetComputeMatrixParam(cullingShader, "_MatrixVP", camera.projectionMatrix * camera.worldToCameraMatrix);
+            cmdBuffer.SetComputeVectorParam(cullingShader, "_CameraPos", camera.transform.position);
+            cmdBuffer.SetComputeFloatParam(cullingShader, "_ScreenResolutionY", camera.pixelHeight);
+            cmdBuffer.SetComputeFloatParam(cullingShader, "_FOV", camera.fieldOfView * Mathf.Deg2Rad);
 
-            cmd.SetComputeBufferParam(cullingShader, traverseKernel, "_BVHNodes", bvhBuffer);
-            cmd.SetComputeBufferParam(cullingShader, traverseKernel, "_ClusterGroups", clusterGroupBuffer);
-            cmd.SetComputeBufferParam(cullingShader, traverseKernel, "_VisibleClusters", visibleClustersBuffer);
+            cmdBuffer.SetComputeBufferParam(cullingShader, traverseKernel, "_BVHNodes", bvhBuffer);
+            cmdBuffer.SetComputeBufferParam(cullingShader, traverseKernel, "_ClusterGroups", clusterGroupBuffer);
+            cmdBuffer.SetComputeBufferParam(cullingShader, traverseKernel, "_VisibleClusters", visibleClustersBuffer);
             
-            cmd.DispatchCompute(cullingShader, traverseKernel, 1, 1, 1);
+            cmdBuffer.DispatchCompute(cullingShader, traverseKernel, 1, 1, 1);
 
             // --- 拷贝可见Cluster数量并构建间接调度参数 ---
-            cmd.CopyCounterValue(visibleClustersBuffer, indirectCullArgs, 0); // 暂存到 indirectCullArgs 开头
-            cmd.CopyCounterValue(visibleClustersBuffer, visibleClustersCountBuffer, 0); // 暂存一个只读备份
+            cmdBuffer.CopyCounterValue(visibleClustersBuffer, indirectCullArgs, 0); // 暂存到 indirectCullArgs 开头
+            cmdBuffer.CopyCounterValue(visibleClustersBuffer, visibleClustersCountBuffer, 0); // 暂存一个只读备份
 
             int buildArgsCull = buildIndirectArgsShader.FindKernel("BuildIndirectArgsCull");
-            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsCull, "_VisibleClustersCount", visibleClustersCountBuffer);
-            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsCull, "_IndirectCullArgs", indirectCullArgs);
-            cmd.DispatchCompute(buildIndirectArgsShader, buildArgsCull, 1, 1, 1);
+            cmdBuffer.SetComputeBufferParam(buildIndirectArgsShader, buildArgsCull, "_VisibleClustersCount", visibleClustersCountBuffer);
+            cmdBuffer.SetComputeBufferParam(buildIndirectArgsShader, buildArgsCull, "_IndirectCullArgs", indirectCullArgs);
+            cmdBuffer.DispatchCompute(buildIndirectArgsShader, buildArgsCull, 1, 1, 1);
 
             // 4. 执行簇级剔除与HZB遮挡剔除
             int clusterCullKernel = cullingShader.FindKernel("CullClusters");
             if (hzbMips != null && hzbMips.Length > 0)
             {
-                cmd.SetComputeTextureParam(cullingShader, clusterCullKernel, "_HZBTexture", hzbMips[0]);
-                cmd.SetComputeVectorParam(cullingShader, "_HZBSize", new Vector2(hzbMips[0].width, hzbMips[0].height));
+                cmdBuffer.SetComputeTextureParam(cullingShader, clusterCullKernel, "_HZBTexture", hzbMips[0]);
+                cmdBuffer.SetComputeVectorParam(cullingShader, "_HZBSize", new Vector2(hzbMips[0].width, hzbMips[0].height));
             }
-            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleClustersRead", visibleClustersBuffer);
-            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleClustersCount", visibleClustersCountBuffer);
-            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Clusters", clusterBuffer);
-            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Vertices", vertexBuffer);
-            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Indices", indexBuffer);
-            cmd.SetComputeMatrixParam(cullingShader, "_ObjectToWorld", objectToWorldMatrix);
+            cmdBuffer.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleClustersRead", visibleClustersBuffer);
+            cmdBuffer.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleClustersCount", visibleClustersCountBuffer);
+            cmdBuffer.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Clusters", clusterBuffer);
+            cmdBuffer.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Vertices", vertexBuffer);
+            cmdBuffer.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Indices", indexBuffer);
+            cmdBuffer.SetComputeMatrixParam(cullingShader, "_ObjectToWorld", objectToWorldMatrix);
 
             // Setup Skinning Data
-            cmd.SetComputeIntParam(cullingShader, "_IsSkinned", isSkinned ? 1 : 0);
-            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_BoneWeights", isSkinned ? boneWeightBuffer : dummySkinWeightBuffer);
-            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_BoneMatrices", isSkinned ? boneMatrixBuffer : dummyBoneMatrixBuffer);
+            cmdBuffer.SetComputeIntParam(cullingShader, "_IsSkinned", isSkinned ? 1 : 0);
+            cmdBuffer.SetComputeBufferParam(cullingShader, clusterCullKernel, "_BoneWeights", isSkinned ? boneWeightBuffer : dummySkinWeightBuffer);
+            cmdBuffer.SetComputeBufferParam(cullingShader, clusterCullKernel, "_BoneMatrices", isSkinned ? boneMatrixBuffer : dummyBoneMatrixBuffer);
 
-            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleTrianglesSW", visibleTrianglesBuffer);
-            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_HWIndicesBuffer", hwClusterIndicesBuffer);
-            cmd.DispatchCompute(cullingShader, clusterCullKernel, indirectCullArgs, 0); // 间接调度
+            cmdBuffer.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleTrianglesSW", visibleTrianglesBuffer);
+            cmdBuffer.SetComputeBufferParam(cullingShader, clusterCullKernel, "_HWIndicesBuffer", hwClusterIndicesBuffer);
+            cmdBuffer.DispatchCompute(cullingShader, clusterCullKernel, indirectCullArgs, 0); // 间接调度
 
             // --- 拷贝软硬件渲染数据数量并构建间接调度参数 ---
-            cmd.CopyCounterValue(visibleTrianglesBuffer, indirectRasterArgs, 0);
-            cmd.CopyCounterValue(visibleTrianglesBuffer, visibleTrianglesCountBuffer, 0); // 保存给 Compute Shader 越界检查
-            cmd.CopyCounterValue(hwClusterIndicesBuffer, indirectDrawArgs, 0);
+            cmdBuffer.CopyCounterValue(visibleTrianglesBuffer, indirectRasterArgs, 0);
+            cmdBuffer.CopyCounterValue(visibleTrianglesBuffer, visibleTrianglesCountBuffer, 0); // 保存给 Compute Shader 越界检查
+            cmdBuffer.CopyCounterValue(hwClusterIndicesBuffer, indirectDrawArgs, 0);
             int buildArgsRaster = buildIndirectArgsShader.FindKernel("BuildIndirectArgsRaster");
             int buildArgsDraw = buildIndirectArgsShader.FindKernel("BuildIndirectArgsDraw");
-            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsRaster, "_VisibleTrianglesCount", indirectRasterArgs);
-            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsRaster, "_IndirectRasterArgs", indirectRasterArgs);
-            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsDraw, "_HWIndicesCount", indirectDrawArgs);
-            cmd.SetComputeBufferParam(buildIndirectArgsShader, buildArgsDraw, "_IndirectDrawArgs", indirectDrawArgs);
-            cmd.DispatchCompute(buildIndirectArgsShader, buildArgsRaster, 1, 1, 1);
-            cmd.DispatchCompute(buildIndirectArgsShader, buildArgsDraw, 1, 1, 1);
+            cmdBuffer.SetComputeBufferParam(buildIndirectArgsShader, buildArgsRaster, "_VisibleTrianglesCount", indirectRasterArgs);
+            cmdBuffer.SetComputeBufferParam(buildIndirectArgsShader, buildArgsRaster, "_IndirectRasterArgs", indirectRasterArgs);
+            cmdBuffer.SetComputeBufferParam(buildIndirectArgsShader, buildArgsDraw, "_HWIndicesCount", indirectDrawArgs);
+            cmdBuffer.SetComputeBufferParam(buildIndirectArgsShader, buildArgsDraw, "_IndirectDrawArgs", indirectDrawArgs);
+            cmdBuffer.DispatchCompute(buildIndirectArgsShader, buildArgsRaster, 1, 1, 1);
+            cmdBuffer.DispatchCompute(buildIndirectArgsShader, buildArgsDraw, 1, 1, 1);
 
             // 5. 执行软光栅化
             int rasterKernel = softwareRasterizer.FindKernel("SoftwareRasterize");
-            cmd.SetComputeMatrixParam(softwareRasterizer, "_MatrixVP", mainCam.projectionMatrix * mainCam.worldToCameraMatrix);
-            cmd.SetComputeIntParam(softwareRasterizer, "_RasterScreenWidth", Screen.width);
-            cmd.SetComputeIntParam(softwareRasterizer, "_RasterScreenHeight", Screen.height);
-            cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibleTrianglesCount", visibleTrianglesCountBuffer);
-            cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibleTrianglesSW", visibleTrianglesBuffer);
-            cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_DepthBuffer", depthBuffer);
-            cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_PayloadBuffer", payloadBuffer);
-            cmd.DispatchCompute(softwareRasterizer, rasterKernel, indirectRasterArgs, 0);
+            cmdBuffer.SetComputeMatrixParam(softwareRasterizer, "_MatrixVP", camera.projectionMatrix * camera.worldToCameraMatrix);
+            cmdBuffer.SetComputeIntParam(softwareRasterizer, "_RasterScreenWidth", camera.pixelWidth);
+            cmdBuffer.SetComputeIntParam(softwareRasterizer, "_RasterScreenHeight", camera.pixelHeight);
+            cmdBuffer.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibleTrianglesCount", visibleTrianglesCountBuffer);
+            cmdBuffer.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibleTrianglesSW", visibleTrianglesBuffer);
+            cmdBuffer.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_DepthBuffer", depthBuffer);
+            cmdBuffer.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_PayloadBuffer", payloadBuffer);
+            cmdBuffer.DispatchCompute(softwareRasterizer, rasterKernel, indirectRasterArgs, 0);
 
             // 6. 执行硬光栅化 (HW Rasterization)
-            // cmd.DrawProceduralIndirect(Matrix4x4.identity, hwMaterial, 0, MeshTopology.Triangles, indirectDrawArgs, 0);
+            // cmdBuffer.DrawProceduralIndirect(Matrix4x4.identity, hwMaterial, 0, MeshTopology.Triangles, indirectDrawArgs, 0);
 
-            // 7. 材质Pass与G-Buffer写入 (改为渲染到独立的 Render Target 以兼容 SRP/URP)
-            cmd.SetRenderTarget(naniteOutput); 
-            cmd.ClearRenderTarget(true, true, Color.clear); // 背景透明，方便合成
+            // 7. 材质Pass写入 (如果是 URP Feature 驱动，直接写入目标，否则写入独立 RT)
+            cmdBuffer.SetRenderTarget(colorTarget, depthTarget);
+            if (!isURPFeatureDriven)
+            {
+                cmdBuffer.ClearRenderTarget(true, true, Color.clear);
+            }
+            
             materialPassMat.SetBuffer("_DepthBuffer", depthBuffer);
             materialPassMat.SetBuffer("_PayloadBuffer", payloadBuffer);
-            materialPassMat.SetInt("_ScreenWidth", Screen.width);
-            materialPassMat.SetInt("_ScreenHeight", Screen.height);
+            materialPassMat.SetInt("_ScreenWidth", camera.pixelWidth);
+            materialPassMat.SetInt("_ScreenHeight", camera.pixelHeight);
             
             // --- Debug 模式传参 ---
             materialPassMat.SetInt("_DebugMode", debugMode ? 1 : 0);
@@ -359,10 +385,10 @@ namespace UnityNanite
             }
             materialPassMat.SetVectorArray("_LODColors", colorArrayCache);
 
-            cmd.DrawProcedural(Matrix4x4.identity, materialPassMat, 0, MeshTopology.Triangles, 3); // 全屏三角形
+            // URP 深度写入开关
+            materialPassMat.SetInt("_IsURP", isURPFeatureDriven ? 1 : 0);
 
-            // 立刻执行管线 (此时 Nanite 的结果已渲染到 naniteOutput 中)
-            Graphics.ExecuteCommandBuffer(cmd);
+            cmdBuffer.DrawProcedural(Matrix4x4.identity, materialPassMat, 0, MeshTopology.Triangles, 3); // 全屏三角形
         }
 
         // =======================

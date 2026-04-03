@@ -33,9 +33,10 @@
 
 ## ⚙️ 核心架构说明 (供进阶开发者参考)
 
-### 1. 跨管线兼容方案 (`naniteOutput` 的作用)
-Nanite 渲染器并没有强行侵入 Unity 的 G-Buffer。所有的软光栅化（Software Rasterization）计算都会将深度和材质载荷原子写入到一个并行的 32 位缓冲池中。
-在材质重建阶段，画面会被独立渲染到名为 `naniteOutput` 的专属 `RenderTexture` 上。最后，利用 `RenderPipelineManager` 的跨管线钩子，通过 `Composite.shader` 将该纹理完美叠加 (Overlay) 到当前摄像机的最终画面上，从而实现了对 URP 和 HDRP 的降维打击式兼容。
+### 1. 跨管线兼容方案 (Feature 托管 vs Overlay)
+本原型采用了智能的**双模运行机制**：
+- **在 URP 环境下 (推荐)**：你可以在 Universal Renderer Data 中添加名为 `NaniteURPFeature` 的 Renderer Feature。系统会自动将 GPU 计算挂载到不透明物体渲染前 (`BeforeRenderingOpaques`)，并**直接将像素颜色和深度写入 URP 的主目标缓冲中**。这种方式下，Nanite 模型可以完美接受后续的 Bloom、DOF (景深)、SSAO 等所有后处理效果，并与常规场景物体发生正确的深度穿插。
+- **在 Built-in / 无 Feature 环境下**：系统会降级到独立画布模式。在材质重建阶段，画面会被独立渲染到名为 `naniteOutput` 的专属 RenderTexture 上，最后通过 `Composite.shader` 叠加 (Overlay) 到屏幕。此模式下不享受后处理。
 
 ### 2. GPU 骨骼动画原理 (Experimental Skinning)
 由于 Nanite 的剔除是基于静态 Cluster 包围盒的，传统的蒙皮会在 CPU 端带来巨大的负担。本原型在 `Culling.compute` 中实现了一套轻量级的 Compute Shader 线性混合蒙皮 (Linear Blend Skinning)。

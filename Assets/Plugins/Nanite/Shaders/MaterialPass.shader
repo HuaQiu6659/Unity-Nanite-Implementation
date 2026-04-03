@@ -37,6 +37,7 @@ Shader "Hidden/Nanite/MaterialPass"
             StructuredBuffer<uint> _DepthBuffer;
             StructuredBuffer<uint> _PayloadBuffer;
             float4 _ScreenParams;
+            uint _IsURP;
 
             // Buffers to fetch vertex data
             // StructuredBuffer<Vertex> _Vertices;
@@ -132,7 +133,17 @@ Shader "Hidden/Nanite/MaterialPass"
                 }
                 
                 o.color = float4(albedo, 1.0);
-                o.depth = depth; // Write back to Depth Buffer for SSAO/Shadows
+
+                // 将深度写回 Z-Buffer (URP下必须写入，Built-in Overlay 下可以不写)
+                if (_IsURP == 1)
+                {
+                    o.depth = depth;
+                }
+                else
+                {
+                    o.depth = i.vertex.z; // Default depth
+                }
+
                 return o;
             }
             ENDHLSL
