@@ -65,12 +65,34 @@ namespace UnityNanite
             InitHZB();
         }
 
+        public void LoadModelData(Vector3[] vertices, uint[] indices, Cluster[] clusters, ClusterGroup[] groups, BVHNode[] bvhNodes)
+        {
+            if (bvhBuffer != null) bvhBuffer.Release();
+            if (clusterGroupBuffer != null) clusterGroupBuffer.Release();
+            if (clusterBuffer != null) clusterBuffer.Release();
+            if (vertexBuffer != null) vertexBuffer.Release();
+            if (indexBuffer != null) indexBuffer.Release();
+
+            bvhBuffer = new ComputeBuffer(bvhNodes.Length, Marshal.SizeOf(typeof(BVHNode)));
+            bvhBuffer.SetData(bvhNodes);
+
+            clusterGroupBuffer = new ComputeBuffer(groups.Length, Marshal.SizeOf(typeof(ClusterGroup)));
+            clusterGroupBuffer.SetData(groups);
+
+            clusterBuffer = new ComputeBuffer(clusters.Length, Marshal.SizeOf(typeof(Cluster)));
+            clusterBuffer.SetData(clusters);
+
+            vertexBuffer = new ComputeBuffer(vertices.Length, 12);
+            vertexBuffer.SetData(vertices);
+
+            indexBuffer = new ComputeBuffer(indices.Length, 4);
+            indexBuffer.SetData(indices);
+        }
+
         void InitBuffers()
         {
             // 初始化缓冲大小（在实际工程中根据加载的模型大小动态分配）
-            bvhBuffer = new ComputeBuffer(1000, Marshal.SizeOf(typeof(BVHNode)));
-            clusterGroupBuffer = new ComputeBuffer(1000, Marshal.SizeOf(typeof(ClusterGroup)));
-            clusterBuffer = new ComputeBuffer(1000, Marshal.SizeOf(typeof(Cluster)));
+            // 注意：真实模型数据现在通过 LoadModelData 注入，这里只初始化动态追加缓冲和参数缓冲
             
             visibleClustersBuffer = new ComputeBuffer(1000, sizeof(uint), ComputeBufferType.Append);
             hwClusterIndicesBuffer = new ComputeBuffer(100000, sizeof(uint), ComputeBufferType.Append);
@@ -87,10 +109,6 @@ namespace UnityNanite
             
             // 计数器保存缓冲
             visibleClustersCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
-            
-            // 模拟Mesh数据缓冲 (实际项目中应从 Mesh 获取)
-            vertexBuffer = new ComputeBuffer(1000, 12);
-            indexBuffer = new ComputeBuffer(3000, 4);
         }
 
         void InitHZB()

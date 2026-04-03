@@ -36,8 +36,10 @@ namespace UnityNanite
 
     public class NaniteSubMesh
     {
-        public List<ClusterGroup> clusterGroupList;
-        public List<Cluster> clusterList;
+        public ClusterGroup[] clusterGroups;
+        public Cluster[] clusters;
+        public Vector3[] vertices;
+        public uint[] indices;
         public int maxMipLevel;
     }
 
