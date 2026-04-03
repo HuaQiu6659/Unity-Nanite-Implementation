@@ -1,4 +1,3 @@
-#pragma kernel CullInstances
 #pragma kernel TraverseBVH
 #pragma kernel CullClusters
 

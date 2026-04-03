@@ -37,16 +37,7 @@ StructuredBuffer<VisibleTriangle> _VisibleTrianglesSW;
 StructuredBuffer<uint> _VisibleTrianglesCount; // 新增：安全越界检查
 float4x4 _MatrixVP;
 
-// Function to pack visibility data
-uint64_t PackVisibility(float depth, uint clusterID, uint triID, uint materialID, uint mipLevel)
-{
-    uint depthInt = asuint(depth); 
-    // Payload (32 bits): [ MipLevel (4) | MaterialID (4) | ClusterID (12) | TriangleID (12) ]
-    uint idData = ((mipLevel & 0xF) << 28) | ((materialID & 0xF) << 24) | ((clusterID & 0xFFF) << 12) | (triID & 0xFFF);
-    
-    uint64_t packed = ((uint64_t)depthInt << 32) | (uint64_t)idData;
-    return packed;
-}
+// Rasterization Logic
 
 [numthreads(64, 1, 1)]
 void SoftwareRasterize (uint3 id : SV_DispatchThreadID)
