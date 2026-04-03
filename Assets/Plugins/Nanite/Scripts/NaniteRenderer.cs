@@ -296,6 +296,7 @@ namespace UnityNanite
 
             // 3. 执行GPU视锥体剔除和BVH遍历
             int traverseKernel = cullingShader.FindKernel("TraverseBVH");
+            cmdBuffer.SetComputeMatrixParam(cullingShader, "_ObjectToWorld", objectToWorldMatrix);
             cmdBuffer.SetComputeMatrixParam(cullingShader, "_MatrixVP", camera.projectionMatrix * camera.worldToCameraMatrix);
             cmdBuffer.SetComputeVectorParam(cullingShader, "_CameraPos", camera.transform.position);
             cmdBuffer.SetComputeFloatParam(cullingShader, "_ScreenResolutionY", camera.pixelHeight);

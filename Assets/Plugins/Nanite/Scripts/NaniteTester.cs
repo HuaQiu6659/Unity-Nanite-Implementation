@@ -12,6 +12,8 @@ public class NaniteTester : MonoBehaviour
     [Tooltip("Maximum LOD levels to generate (Currently prototype only builds base level).")]
     public int maxLODLevel = 5;
 
+    private Renderer targetRenderer;
+
     void Start()
     {
         if (naniteRenderer == null)
@@ -22,7 +24,6 @@ public class NaniteTester : MonoBehaviour
 
         // 自动在自身及所有子节点中寻找可用的 Mesh
         Mesh mesh = null;
-        Renderer targetRenderer = null;
 
         NaniteSkinWeight[] skinWeights = null;
         Transform[] bones = null;
@@ -107,9 +108,9 @@ public class NaniteTester : MonoBehaviour
 
     void Update()
     {
-        if (naniteRenderer != null)
+        if (naniteRenderer != null && targetRenderer != null)
         {
-            naniteRenderer.objectToWorldMatrix = transform.localToWorldMatrix;
+            naniteRenderer.objectToWorldMatrix = targetRenderer.transform.localToWorldMatrix;
         }
     }
 }

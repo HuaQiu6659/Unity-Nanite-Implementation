@@ -284,7 +284,7 @@ namespace UnityNanite
             rootGroup.bounds = Vector3.zero;
             rootGroup.radius = 1000f; // Big enough to cover basic models
             rootGroup.minLODError = 0f;
-            rootGroup.maxParentLODError = float.MaxValue;
+            rootGroup.maxParentLODError = 0f; // WAS float.MaxValue, caused screenError = Infinity -> nothing rendered!
             rootGroup.mipLevel = 0;
             clusterGroupList.Add(rootGroup);
 

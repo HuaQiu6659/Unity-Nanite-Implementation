@@ -84,8 +84,14 @@ float2 _HZBSize;
 
 float CalculateScreenError(float3 center, float radius, float error)
 {
-    float d = distance(_CameraPos, center);
-    d = max(d, radius); // avoid division by zero or negative
+    float3 worldCenter = mul(_ObjectToWorld, float4(center, 1.0)).xyz;
+    // radius roughly scaled:
+    float3 scale = float3(length(_ObjectToWorld[0].xyz), length(_ObjectToWorld[1].xyz), length(_ObjectToWorld[2].xyz));
+    float maxScale = max(scale.x, max(scale.y, scale.z));
+    float worldRadius = radius * maxScale;
+
+    float d = distance(_CameraPos, worldCenter);
+    d = max(d, worldRadius); // avoid division by zero or negative
     float screenError = (error * _ScreenResolutionY) / (d * tan(_FOV * 0.5));
     return screenError;
 }
