@@ -117,10 +117,13 @@ namespace UnityNanite
 
         void InitScreenBuffers(Camera cam)
         {
-            if (naniteOutput != null) naniteOutput.Release();
-            naniteOutput = new RenderTexture(cam.pixelWidth, cam.pixelHeight, 24, RenderTextureFormat.ARGB32);
-            naniteOutput.enableRandomWrite = true;
-            naniteOutput.Create();
+            if (!isURPFeatureDriven)
+            {
+                if (naniteOutput != null) naniteOutput.Release();
+                naniteOutput = new RenderTexture(cam.pixelWidth, cam.pixelHeight, 24, RenderTextureFormat.ARGB32);
+                naniteOutput.enableRandomWrite = true;
+                naniteOutput.Create();
+            }
 
             if (depthBuffer != null) depthBuffer.Release();
             if (payloadBuffer != null) payloadBuffer.Release();
