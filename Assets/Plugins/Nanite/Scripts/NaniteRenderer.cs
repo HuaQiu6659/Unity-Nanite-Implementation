@@ -6,7 +6,7 @@ using UnityEngine.Rendering; // 新增：用于 URP/HDRP 的 RenderPipelineManag
 namespace UnityNanite
 {
     [System.Serializable]
-    [StructLayout(LayoutPath.Sequential)]
+    [StructLayout(LayoutKind.Sequential)]
     public struct NaniteSkinWeight
     {
         public float w0, w1, w2, w3;
