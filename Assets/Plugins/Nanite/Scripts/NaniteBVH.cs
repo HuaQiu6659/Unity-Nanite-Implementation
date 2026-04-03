@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Pool; // 引入对象池
 
 namespace UnityNanite
 {
@@ -15,13 +16,13 @@ namespace UnityNanite
 
     public class NaniteBVHBuilder
     {
-        public static List<BVHNode> BuildBVH(List<ClusterGroup> clusterGroups)
+        public static List<BVHNode> BuildBVH(ClusterGroup[] clusterGroups)
         {
             List<BVHNode> nodes = new List<BVHNode>();
             
             // Collect leaf indices
             List<int> groupIndices = new List<int>();
-            for (int i = 0; i < clusterGroups.Count; i++)
+            for (int i = 0; i < clusterGroups.Length; i++)
             {
                 groupIndices.Add(i);
             }
@@ -30,7 +31,7 @@ namespace UnityNanite
             return nodes;
         }
 
-        private static int BuildRecursive(List<BVHNode> nodes, List<ClusterGroup> clusterGroups, List<int> groupIndices)
+        private static int BuildRecursive(List<BVHNode> nodes, ClusterGroup[] clusterGroups, List<int> groupIndices)
         {
             if (groupIndices.Count == 1)
             {
@@ -38,12 +39,12 @@ namespace UnityNanite
                 ClusterGroup group = clusterGroups[groupIndex];
                 
                 BVHNode leaf = new BVHNode();
-                leaf.boundsMin = group.Bounds - new Vector3(group.radius, group.radius, group.radius);
-                leaf.boundsMax = group.Bounds + new Vector3(group.radius, group.radius, group.radius);
+                leaf.boundsMin = group.bounds - new Vector3(group.radius, group.radius, group.radius);
+                leaf.boundsMax = group.bounds + new Vector3(group.radius, group.radius, group.radius);
                 leaf.leftChildOrClusterGroup = groupIndex;
                 leaf.rightChild = -1;
-                leaf.maxParentLODError = group.MaxParentLODError;
-                leaf.minLODError = group.MinLODError;
+                leaf.maxParentLODError = group.maxParentLODError;
+                leaf.minLODError = group.minLODError;
                 
                 nodes.Add(leaf);
                 return nodes.Count - 1;
@@ -58,14 +59,14 @@ namespace UnityNanite
             foreach (int idx in groupIndices)
             {
                 ClusterGroup g = clusterGroups[idx];
-                Vector3 bMin = g.Bounds - new Vector3(g.radius, g.radius, g.radius);
-                Vector3 bMax = g.Bounds + new Vector3(g.radius, g.radius, g.radius);
+                Vector3 bMin = g.bounds - new Vector3(g.radius, g.radius, g.radius);
+                Vector3 bMax = g.bounds + new Vector3(g.radius, g.radius, g.radius);
                 
                 overallMin = Vector3.Min(overallMin, bMin);
                 overallMax = Vector3.Max(overallMax, bMax);
                 
-                centroidMin = Vector3.Min(centroidMin, g.Bounds);
-                centroidMax = Vector3.Max(centroidMax, g.Bounds);
+                centroidMin = Vector3.Min(centroidMin, g.bounds);
+                centroidMax = Vector3.Max(centroidMax, g.bounds);
             }
 
             // Split
@@ -76,12 +77,12 @@ namespace UnityNanite
 
             float splitPos = (centroidMin[splitAxis] + centroidMax[splitAxis]) * 0.5f;
 
-            List<int> leftIndices = new List<int>();
-            List<int> rightIndices = new List<int>();
+            List<int> leftIndices = ListPool<int>.Get();
+            List<int> rightIndices = ListPool<int>.Get();
 
             foreach (int idx in groupIndices)
             {
-                if (clusterGroups[idx].Bounds[splitAxis] < splitPos)
+                if (clusterGroups[idx].bounds[splitAxis] < splitPos)
                     leftIndices.Add(idx);
                 else
                     rightIndices.Add(idx);
@@ -90,9 +91,11 @@ namespace UnityNanite
             // Fallback if split fails
             if (leftIndices.Count == 0 || rightIndices.Count == 0)
             {
+                leftIndices.Clear();
+                rightIndices.Clear();
                 int mid = groupIndices.Count / 2;
-                leftIndices = groupIndices.GetRange(0, mid);
-                rightIndices = groupIndices.GetRange(mid, groupIndices.Count - mid);
+                leftIndices.AddRange(groupIndices.GetRange(0, mid));
+                rightIndices.AddRange(groupIndices.GetRange(mid, groupIndices.Count - mid));
             }
 
             int leftNodeIdx = BuildRecursive(nodes, clusterGroups, leftIndices);
@@ -107,6 +110,11 @@ namespace UnityNanite
             node.minLODError = Mathf.Min(nodes[leftNodeIdx].minLODError, nodes[rightNodeIdx].minLODError);
 
             nodes.Add(node);
+
+            // 归还对象池，消除垃圾回收(GC)压力
+            ListPool<int>.Release(leftIndices);
+            ListPool<int>.Release(rightIndices);
+
             return nodes.Count - 1;
         }
     }

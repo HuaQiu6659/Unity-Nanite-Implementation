@@ -82,6 +82,9 @@ float CalculateScreenError(float3 center, float radius, float error)
 [numthreads(64, 1, 1)]
 void TraverseBVH (uint3 id : SV_DispatchThreadID)
 {
+    // Currently traversing BVH per instance, and we only have 1 instance prototype
+    if (id.x > 0) return;
+
     // Assuming 1 thread per instance, traversing the BVH.
     // In a real implementation, we'd use persistent threads or stack-based traversal.
     // For simplicity, a small stack here.

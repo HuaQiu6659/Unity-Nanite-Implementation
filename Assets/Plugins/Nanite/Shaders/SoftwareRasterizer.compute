@@ -22,6 +22,7 @@ struct VisibleTriangle
 };
 
 StructuredBuffer<VisibleTriangle> _VisibleTrianglesSW;
+StructuredBuffer<uint> _VisibleTrianglesCount; // 新增：安全越界检查
 float4x4 _MatrixVP;
 uint _ScreenWidth;
 uint _ScreenHeight;
@@ -40,6 +41,10 @@ uint64_t PackVisibility(float depth, uint clusterID, uint triID, uint materialID
 [numthreads(64, 1, 1)]
 void SoftwareRasterize (uint3 id : SV_DispatchThreadID)
 {
+    // Ensure thread ID is within the actual triangle count
+    uint totalTriangles = _VisibleTrianglesCount[0];
+    if (id.x >= totalTriangles) return;
+
     // One thread per triangle
     uint triIdx = id.x;
     // Bounds check omitted for brevity

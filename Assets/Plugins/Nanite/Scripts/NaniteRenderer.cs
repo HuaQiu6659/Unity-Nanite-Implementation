@@ -46,8 +46,10 @@ namespace UnityNanite
         private ComputeBuffer vertexBuffer;
         private ComputeBuffer indexBuffer;
         private ComputeBuffer visibleClustersCountBuffer;
+        private ComputeBuffer visibleTrianglesCountBuffer; // 新增：用于软光栅化边界检查
 
         private Camera mainCam;
+        private Vector4[] colorArrayCache = new Vector4[8]; // 缓存：消除每帧 new Vector4[8] 的 GC
 
         void Start()
         {
@@ -87,6 +89,26 @@ namespace UnityNanite
 
             indexBuffer = new ComputeBuffer(indices.Length, 4);
             indexBuffer.SetData(indices);
+
+            // 动态调整追加缓冲的容量上限，防止大型模型溢出导致 GPU 崩溃
+            int maxClusters = clusters.Length;
+            int maxTriangles = indices.Length / 3;
+
+            if (visibleClustersBuffer != null && visibleClustersBuffer.count < maxClusters)
+            {
+                visibleClustersBuffer.Release();
+                visibleClustersBuffer = new ComputeBuffer(maxClusters, sizeof(uint), ComputeBufferType.Append);
+            }
+            if (hwClusterIndicesBuffer != null && hwClusterIndicesBuffer.count < maxClusters)
+            {
+                hwClusterIndicesBuffer.Release();
+                hwClusterIndicesBuffer = new ComputeBuffer(maxClusters, sizeof(uint), ComputeBufferType.Append);
+            }
+            if (visibleTrianglesBuffer != null && visibleTrianglesBuffer.count < maxTriangles)
+            {
+                visibleTrianglesBuffer.Release();
+                visibleTrianglesBuffer = new ComputeBuffer(maxTriangles, 44, ComputeBufferType.Append); // 44 bytes = float3(12)*3 + uint(4)*2
+            }
         }
 
         void InitBuffers()
@@ -109,6 +131,7 @@ namespace UnityNanite
             
             // 计数器保存缓冲
             visibleClustersCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
+            visibleTrianglesCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
         }
 
         void InitHZB()
@@ -191,6 +214,7 @@ namespace UnityNanite
 
             // --- 拷贝软硬件渲染数据数量并构建间接调度参数 ---
             cmd.CopyCounterValue(visibleTrianglesBuffer, indirectRasterArgs, 0);
+            cmd.CopyCounterValue(visibleTrianglesBuffer, visibleTrianglesCountBuffer, 0); // 保存给 Compute Shader 越界检查
             cmd.CopyCounterValue(hwClusterIndicesBuffer, indirectDrawArgs, 0);
             int buildArgsRaster = buildIndirectArgsShader.FindKernel("BuildIndirectArgsRaster");
             int buildArgsDraw = buildIndirectArgsShader.FindKernel("BuildIndirectArgsDraw");
@@ -206,6 +230,7 @@ namespace UnityNanite
             cmd.SetComputeMatrixParam(softwareRasterizer, "_MatrixVP", mainCam.projectionMatrix * mainCam.worldToCameraMatrix);
             cmd.SetComputeIntParam(softwareRasterizer, "_ScreenWidth", Screen.width);
             cmd.SetComputeIntParam(softwareRasterizer, "_ScreenHeight", Screen.height);
+            cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibleTrianglesCount", visibleTrianglesCountBuffer);
             cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibleTrianglesSW", visibleTrianglesBuffer);
             cmd.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibilityBuffer64", visibilityBuffer64);
             cmd.DispatchCompute(softwareRasterizer, rasterKernel, indirectRasterArgs, 0);
@@ -223,12 +248,11 @@ namespace UnityNanite
             materialPassMat.SetInt("_DebugMode", debugMode ? 1 : 0);
             materialPassMat.SetInt("_ShowLODWatermark", showLODWatermark ? 1 : 0);
             
-            Vector4[] colorArray = new Vector4[8];
             for(int i = 0; i < 8; i++)
             {
-                colorArray[i] = i < lodColors.Length ? (Vector4)lodColors[i] : Vector4.one;
+                colorArrayCache[i] = i < lodColors.Length ? (Vector4)lodColors[i] : Vector4.one;
             }
-            materialPassMat.SetVectorArray("_LODColors", colorArray);
+            materialPassMat.SetVectorArray("_LODColors", colorArrayCache);
 
             cmd.DrawProcedural(Matrix4x4.identity, materialPassMat, 0, MeshTopology.Triangles, 3); // 全屏三角形
         }
