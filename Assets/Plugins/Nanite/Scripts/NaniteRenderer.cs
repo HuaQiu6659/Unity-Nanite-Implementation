@@ -56,6 +56,9 @@ namespace UnityNanite
         private Camera mainCam;
         private Vector4[] colorArrayCache = new Vector4[8]; // 缓存：消除每帧 new Vector4[8] 的 GC
 
+        private int lastScreenWidth = 0;
+        private int lastScreenHeight = 0;
+
         void Start()
         {
             mainCam = GetComponent<Camera>();
@@ -65,23 +68,34 @@ namespace UnityNanite
             cmd = new CommandBuffer();
             cmd.name = "Nanite Render Pass";
 
-            // 初始化跨管线的渲染目标 (24位深度以支持SV_Depth输出)
-            naniteOutput = new RenderTexture(Screen.width, Screen.height, 24, RenderTextureFormat.ARGB32);
-            naniteOutput.enableRandomWrite = true;
-            naniteOutput.Create();
-
             Shader compShader = Shader.Find("Hidden/NaniteComposite");
             if (compShader != null)
                 compositeMat = new Material(compShader);
 
+            lastScreenWidth = Screen.width;
+            lastScreenHeight = Screen.height;
+
+            InitScreenBuffers();
             InitBuffers();
             InitHZB();
             
-            // 对于 Built-in，使用 OnRenderImage (下文)，对于 SRP，注册事件
             if (GraphicsSettings.renderPipelineAsset != null)
             {
                 RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
             }
+        }
+
+        void InitScreenBuffers()
+        {
+            if (naniteOutput != null) naniteOutput.Release();
+            naniteOutput = new RenderTexture(lastScreenWidth, lastScreenHeight, 24, RenderTextureFormat.ARGB32);
+            naniteOutput.enableRandomWrite = true;
+            naniteOutput.Create();
+
+            if (depthBuffer != null) depthBuffer.Release();
+            if (payloadBuffer != null) payloadBuffer.Release();
+            depthBuffer = new ComputeBuffer(lastScreenWidth * lastScreenHeight, 4);
+            payloadBuffer = new ComputeBuffer(lastScreenWidth * lastScreenHeight, 4);
         }
 
         void OnDisable()
@@ -151,10 +165,6 @@ namespace UnityNanite
             indirectRasterArgs = new ComputeBuffer(3, sizeof(uint), ComputeBufferType.IndirectArguments);
             indirectDrawArgs = new ComputeBuffer(5, sizeof(uint), ComputeBufferType.IndirectArguments);
 
-            // 初始化可见性缓冲 (分离为深度和Payload以支持DX11)
-            depthBuffer = new ComputeBuffer(Screen.width * Screen.height, 4);
-            payloadBuffer = new ComputeBuffer(Screen.width * Screen.height, 4);
-            
             // 计数器保存缓冲
             visibleClustersCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
             visibleTrianglesCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
@@ -183,6 +193,14 @@ namespace UnityNanite
         {
             if (cullingShader == null || softwareRasterizer == null || materialPassMat == null || buildIndirectArgsShader == null) return;
             if (bvhBuffer == null || !bvhBuffer.IsValid()) return; // 防止未 LoadModelData 时报错
+
+            if (Screen.width != lastScreenWidth || Screen.height != lastScreenHeight)
+            {
+                lastScreenWidth = Screen.width;
+                lastScreenHeight = Screen.height;
+                InitScreenBuffers();
+                InitHZB();
+            }
 
             cmd.Clear();
             
