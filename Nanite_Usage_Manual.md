@@ -5,7 +5,9 @@
 ## 🚀 快速开始（1分钟开箱即用）
 
 ### 第一步：配置渲染管线与摄像机
-1. **兼容性确认**：无论你的工程是 Built-in 还是 URP，直接打开即可，无需配置 Render Feature。
+1. **管线配置**：
+   *   **如果是 URP 工程 (强烈推荐)**：在 Project 窗口找到你的 `UniversalRendererData` 资产，在 Inspector 最下方点击 `Add Renderer Feature`，选择 **`Nanite URP Feature`**。这能让模型享受 Bloom 等后处理并有正确的深度穿插。
+   *   **如果是 Built-in / HDRP 工程**：无需额外配置，脚本会自动回退到 Overlay 兼容模式。
 2. 在场景中选中你的 **Main Camera**（或者任何你想用来观察的摄像机）。
 3. 将 `Assets/Plugins/Nanite/Scripts/NaniteRenderer.cs` 脚本拖拽挂载到该摄像机上。
 4. 找到 `NaniteRenderer` 组件的 **[Shaders]** 面板，依次从 Project 窗口将以下文件拖入对应的槽位：
