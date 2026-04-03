@@ -19,22 +19,44 @@ public class NaniteTester : MonoBehaviour
         Mesh mesh = null;
         Renderer targetRenderer = null;
 
-        // 1. 尝试找普通的 MeshFilter
-        MeshFilter mf = GetComponentInChildren<MeshFilter>();
+        NaniteSkinWeight[] skinWeights = null;
+        Transform[] bones = null;
+        Matrix4x4[] bindposes = null;
+
+        // 2. 如果没有 MeshFilter，尝试找带蒙皮的 SkinnedMeshRenderer
+        SkinnedMeshRenderer smr = GetComponentInChildren<SkinnedMeshRenderer>();
         if (mf != null && mf.sharedMesh != null)
         {
             mesh = mf.sharedMesh;
             targetRenderer = mf.GetComponent<MeshRenderer>();
         }
-        else
+        else if (smr != null && smr.sharedMesh != null)
         {
-            // 2. 如果没有 MeshFilter，尝试找带蒙皮的 SkinnedMeshRenderer
-            SkinnedMeshRenderer smr = GetComponentInChildren<SkinnedMeshRenderer>();
-            if (smr != null && smr.sharedMesh != null)
+            mesh = smr.sharedMesh;
+            targetRenderer = smr;
+            
+            BoneWeight[] bws = mesh.boneWeights;
+            if (bws != null && bws.Length > 0)
             {
-                mesh = smr.sharedMesh;
-                targetRenderer = smr;
-                Debug.LogWarning("NaniteTester: Found a SkinnedMeshRenderer! Note that Nanite currently only supports static meshes. The character will be rendered in its T-Pose/Bind-Pose without animation.");
+                skinWeights = new NaniteSkinWeight[bws.Length];
+                for (int i = 0; i < bws.Length; i++)
+                {
+                    skinWeights[i].w0 = bws[i].weight0;
+                    skinWeights[i].w1 = bws[i].weight1;
+                    skinWeights[i].w2 = bws[i].weight2;
+                    skinWeights[i].w3 = bws[i].weight3;
+                    skinWeights[i].i0 = bws[i].boneIndex0;
+                    skinWeights[i].i1 = bws[i].boneIndex1;
+                    skinWeights[i].i2 = bws[i].boneIndex2;
+                    skinWeights[i].i3 = bws[i].boneIndex3;
+                }
+                bones = smr.bones;
+                bindposes = mesh.bindposes;
+                Debug.Log("NaniteTester: Found a SkinnedMeshRenderer! Extracting bone weights for GPU Skinning.");
+            }
+            else
+            {
+                Debug.LogWarning("NaniteTester: SkinnedMeshRenderer found but no bone weights present.");
             }
         }
 
@@ -61,7 +83,10 @@ public class NaniteTester : MonoBehaviour
             naniteMesh.indices, 
             naniteMesh.clusters, 
             naniteMesh.clusterGroups, 
-            bvhNodes.ToArray()
+            bvhNodes.ToArray(),
+            skinWeights,
+            bones,
+            bindposes
         );
 
         // Disable normal Unity rendering
@@ -71,5 +96,13 @@ public class NaniteTester : MonoBehaviour
         }
 
         Debug.Log("NaniteTester: Load complete! Switch to Debug Mode on the Camera to see clusters.");
+    }
+
+    void Update()
+    {
+        if (naniteRenderer != null)
+        {
+            naniteRenderer.objectToWorldMatrix = transform.localToWorldMatrix;
+        }
     }
 }

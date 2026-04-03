@@ -51,6 +51,17 @@ struct VisibleTriangle
     uint materialID; 
     uint mipLevel; // 新增：传递给软光栅与材质Pass
 };
+
+// Skinning Data
+struct NaniteSkinWeight
+{
+    float w0, w1, w2, w3;
+    int i0, i1, i2, i3;
+};
+uint _IsSkinned;
+StructuredBuffer<NaniteSkinWeight> _BoneWeights;
+StructuredBuffer<float4x4> _BoneMatrices;
+
 AppendStructuredBuffer<VisibleTriangle> _VisibleTrianglesSW; // For SW rasterization
 AppendStructuredBuffer<uint> _HWIndicesBuffer; // For HW rasterization
 
@@ -77,6 +88,19 @@ float CalculateScreenError(float3 center, float radius, float error)
     d = max(d, radius); // avoid division by zero or negative
     float screenError = (error * _ScreenResolutionY) / (d * tan(_FOV * 0.5));
     return screenError;
+}
+
+float3 SkinVertex(uint vIdx, float3 pos)
+{
+    if (_IsSkinned == 0) return pos;
+    
+    NaniteSkinWeight bw = _BoneWeights[vIdx];
+    float4x4 m = _BoneMatrices[bw.i0] * bw.w0 +
+                 _BoneMatrices[bw.i1] * bw.w1 +
+                 _BoneMatrices[bw.i2] * bw.w2 +
+                 _BoneMatrices[bw.i3] * bw.w3;
+                 
+    return mul(m, float4(pos, 1.0)).xyz;
 }
 
 [numthreads(64, 1, 1)]
@@ -155,9 +179,13 @@ void CullClusters (uint3 id : SV_DispatchThreadID)
         uint idx1 = _Indices[cluster.indexStart + i + 1];
         uint idx2 = _Indices[cluster.indexStart + i + 2];
 
-        float3 v0 = mul(_ObjectToWorld, float4(_Vertices[idx0], 1.0)).xyz;
-        float3 v1 = mul(_ObjectToWorld, float4(_Vertices[idx1], 1.0)).xyz;
-        float3 v2 = mul(_ObjectToWorld, float4(_Vertices[idx2], 1.0)).xyz;
+        float3 local_v0 = SkinVertex(idx0, _Vertices[idx0]);
+        float3 local_v1 = SkinVertex(idx1, _Vertices[idx1]);
+        float3 local_v2 = SkinVertex(idx2, _Vertices[idx2]);
+
+        float3 v0 = mul(_ObjectToWorld, float4(local_v0, 1.0)).xyz;
+        float3 v1 = mul(_ObjectToWorld, float4(local_v1, 1.0)).xyz;
+        float3 v2 = mul(_ObjectToWorld, float4(local_v2, 1.0)).xyz;
 
         VisibleTriangle tri;
         tri.v0 = v0;

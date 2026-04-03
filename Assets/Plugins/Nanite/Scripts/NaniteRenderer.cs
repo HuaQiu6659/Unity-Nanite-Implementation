@@ -5,6 +5,14 @@ using UnityEngine.Rendering; // 新增：用于 URP/HDRP 的 RenderPipelineManag
 
 namespace UnityNanite
 {
+    [System.Serializable]
+    [StructLayout(LayoutPath.Sequential)]
+    public struct NaniteSkinWeight
+    {
+        public float w0, w1, w2, w3;
+        public int i0, i1, i2, i3;
+    }
+
     [RequireComponent(typeof(Camera))]
     public class NaniteRenderer : MonoBehaviour
     {
@@ -25,6 +33,8 @@ namespace UnityNanite
 
         public RenderTexture naniteOutput;
         private Material compositeMat;
+
+        public Matrix4x4 objectToWorldMatrix = Matrix4x4.identity; // 独立于相机的模型 Transform
 
         private Material materialPassMat;
         private CommandBuffer cmd;
@@ -52,6 +62,16 @@ namespace UnityNanite
         private ComputeBuffer indexBuffer;
         private ComputeBuffer visibleClustersCountBuffer;
         private ComputeBuffer visibleTrianglesCountBuffer; // 新增：用于软光栅化边界检查
+
+        // GPU Skinning Data
+        private ComputeBuffer boneWeightBuffer;
+        private ComputeBuffer boneMatrixBuffer;
+        private ComputeBuffer dummySkinWeightBuffer;
+        private ComputeBuffer dummyBoneMatrixBuffer;
+        private Transform[] bones;
+        private Matrix4x4[] bindposes;
+        private Matrix4x4[] boneMatrixCache;
+        private bool isSkinned = false;
 
         private Camera mainCam;
         private Vector4[] colorArrayCache = new Vector4[8]; // 缓存：消除每帧 new Vector4[8] 的 GC
@@ -106,13 +126,28 @@ namespace UnityNanite
             }
         }
 
-        public void LoadModelData(Vector3[] vertices, uint[] indices, Cluster[] clusters, ClusterGroup[] groups, BVHNode[] bvhNodes)
+        public void LoadModelData(Vector3[] vertices, uint[] indices, Cluster[] clusters, ClusterGroup[] groups, BVHNode[] bvhNodes, 
+            NaniteSkinWeight[] skinWeights = null, Transform[] smrBones = null, Matrix4x4[] smrBindposes = null)
         {
             if (bvhBuffer != null) bvhBuffer.Release();
             if (clusterGroupBuffer != null) clusterGroupBuffer.Release();
             if (clusterBuffer != null) clusterBuffer.Release();
             if (vertexBuffer != null) vertexBuffer.Release();
             if (indexBuffer != null) indexBuffer.Release();
+            if (boneWeightBuffer != null) boneWeightBuffer.Release();
+            if (boneMatrixBuffer != null) boneMatrixBuffer.Release();
+
+            isSkinned = (skinWeights != null && skinWeights.Length > 0 && smrBones != null && smrBones.Length > 0);
+            if (isSkinned)
+            {
+                boneWeightBuffer = new ComputeBuffer(skinWeights.Length, Marshal.SizeOf(typeof(NaniteSkinWeight)));
+                boneWeightBuffer.SetData(skinWeights);
+                
+                bones = smrBones;
+                bindposes = smrBindposes;
+                boneMatrixCache = new Matrix4x4[bones.Length];
+                boneMatrixBuffer = new ComputeBuffer(bones.Length, Marshal.SizeOf(typeof(Matrix4x4)));
+            }
 
             bvhBuffer = new ComputeBuffer(bvhNodes.Length, Marshal.SizeOf(typeof(BVHNode)));
             bvhBuffer.SetData(bvhNodes);
@@ -168,6 +203,10 @@ namespace UnityNanite
             // 计数器保存缓冲
             visibleClustersCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
             visibleTrianglesCountBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
+
+            // Dummy skinning buffers to prevent D3D11 unbound buffer warnings
+            dummySkinWeightBuffer = new ComputeBuffer(1, Marshal.SizeOf(typeof(NaniteSkinWeight)));
+            dummyBoneMatrixBuffer = new ComputeBuffer(1, Marshal.SizeOf(typeof(Matrix4x4)));
         }
 
         void InitHZB()
@@ -200,6 +239,16 @@ namespace UnityNanite
                 lastScreenHeight = Screen.height;
                 InitScreenBuffers();
                 InitHZB();
+            }
+
+            if (isSkinned && bones != null && bindposes != null)
+            {
+                Matrix4x4 rootInv = objectToWorldMatrix.inverse;
+                for (int i = 0; i < bones.Length; i++)
+                {
+                    boneMatrixCache[i] = rootInv * bones[i].localToWorldMatrix * bindposes[i];
+                }
+                boneMatrixBuffer.SetData(boneMatrixCache);
             }
 
             cmd.Clear();
@@ -255,7 +304,12 @@ namespace UnityNanite
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Clusters", clusterBuffer);
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Vertices", vertexBuffer);
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Indices", indexBuffer);
-            cmd.SetComputeMatrixParam(cullingShader, "_ObjectToWorld", transform.localToWorldMatrix);
+            cmd.SetComputeMatrixParam(cullingShader, "_ObjectToWorld", objectToWorldMatrix);
+
+            // Setup Skinning Data
+            cmd.SetComputeIntParam(cullingShader, "_IsSkinned", isSkinned ? 1 : 0);
+            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_BoneWeights", isSkinned ? boneWeightBuffer : dummySkinWeightBuffer);
+            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_BoneMatrices", isSkinned ? boneMatrixBuffer : dummyBoneMatrixBuffer);
 
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleTrianglesSW", visibleTrianglesBuffer);
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_HWIndicesBuffer", hwClusterIndicesBuffer);
@@ -381,6 +435,11 @@ namespace UnityNanite
                     if (rt != null) rt.Release();
                 }
             }
+
+            dummySkinWeightBuffer?.Release();
+            dummyBoneMatrixBuffer?.Release();
+            boneWeightBuffer?.Release();
+            boneMatrixBuffer?.Release();
         }
     }
 }
