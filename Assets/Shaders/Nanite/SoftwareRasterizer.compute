@@ -1,0 +1,93 @@
+#pragma kernel SoftwareRasterize
+
+// Visibility Buffer Format:
+// 32 bits Depth | 20 bits ClusterID | 12 bits TriangleID
+RWTexture2D<uint2> _VisibilityBuffer; // DX11 doesn't support 64-bit atomics on textures natively, so usually done via R32G32_UINT or structured buffer + InterlockedMax on a 64-bit uint buffer, then copied to texture.
+
+struct VisibleTriangle
+{
+    float3 v0;
+    float3 v1;
+    float3 v2;
+    uint clusterID;
+    uint triID;
+};
+
+StructuredBuffer<VisibleTriangle> _VisibleTrianglesSW;
+float4x4 _MatrixVP;
+uint _ScreenWidth;
+uint _ScreenHeight;
+
+// Function to pack visibility data
+uint2 PackVisibility(float depth, uint clusterID, uint triID)
+{
+    // Map depth [0,1] to uint
+    uint depthInt = asuint(depth); 
+    uint idData = (clusterID << 12) | (triID & 0xFFF);
+    return uint2(depthInt, idData);
+}
+
+[numthreads(64, 1, 1)]
+void SoftwareRasterize (uint3 id : SV_DispatchThreadID)
+{
+    // One thread per triangle
+    uint triIdx = id.x;
+    // Bounds check omitted for brevity
+    
+    VisibleTriangle tri = _VisibleTrianglesSW[triIdx];
+    
+    // Project to clip space
+    float4 p0 = mul(_MatrixVP, float4(tri.v0, 1.0));
+    float4 p1 = mul(_MatrixVP, float4(tri.v1, 1.0));
+    float4 p2 = mul(_MatrixVP, float4(tri.v2, 1.0));
+    
+    // Perspective divide
+    p0.xyz /= p0.w;
+    p1.xyz /= p1.w;
+    p2.xyz /= p2.w;
+    
+    // Screen space coordinates
+    float2 s0 = (p0.xy * 0.5 + 0.5) * float2(_ScreenWidth, _ScreenHeight);
+    float2 s1 = (p1.xy * 0.5 + 0.5) * float2(_ScreenWidth, _ScreenHeight);
+    float2 s2 = (p2.xy * 0.5 + 0.5) * float2(_ScreenWidth, _ScreenHeight);
+    
+    // Bounding box of the triangle
+    int minX = max(0, (int)min(s0.x, min(s1.x, s2.x)));
+    int maxX = min((int)_ScreenWidth - 1, (int)max(s0.x, max(s1.x, s2.x)));
+    int minY = max(0, (int)min(s0.y, min(s1.y, s2.y)));
+    int maxY = min((int)_ScreenHeight - 1, (int)max(s0.y, max(s1.y, s2.y)));
+    
+    // Rasterization loop (Edge equations)
+    for (int y = minY; y <= maxY; ++y)
+    {
+        for (int x = minX; x <= maxX; ++x)
+        {
+            float2 p = float2(x + 0.5, y + 0.5);
+            
+            // Edge functions
+            float w0 = (s2.x - s1.x) * (p.y - s1.y) - (s2.y - s1.y) * (p.x - s1.x);
+            float w1 = (s0.x - s2.x) * (p.y - s2.y) - (s0.y - s2.y) * (p.x - s2.x);
+            float w2 = (s1.x - s0.x) * (p.y - s0.y) - (s1.y - s0.y) * (p.x - s0.x);
+            
+            // Inside check (assuming counter-clockwise winding)
+            if (w0 >= 0 && w1 >= 0 && w2 >= 0)
+            {
+                // Barycentric coordinates
+                float area = w0 + w1 + w2;
+                float b0 = w0 / area;
+                float b1 = w1 / area;
+                float b2 = w2 / area;
+                
+                // Interpolate depth
+                float depth = b0 * p0.z + b1 * p1.z + b2 * p2.z;
+                
+                // Pack data
+                uint2 packedData = PackVisibility(depth, tri.clusterID, tri.triID);
+                
+                // In a real implementation, we'd use InterlockedMax on a 64-bit buffer
+                // For demonstration, writing directly
+                // _VisibilityBuffer[uint2(x, y)] = packedData;
+            }
+        }
+    }
+}

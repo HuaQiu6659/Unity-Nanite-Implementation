@@ -1,0 +1,32 @@
+#pragma kernel GenerateHZB
+
+// HZB Mip 0 通常由相机的原始 DepthTexture 降采样而来，之后不断往下生成
+Texture2D<float> _InputDepth;
+RWTexture2D<float> _OutputHZB;
+
+SamplerState sampler_InputDepth;
+float2 _InvSize;
+
+[numthreads(8, 8, 1)]
+void GenerateHZB (uint3 id : SV_DispatchThreadID)
+{
+    // 获取当前像素中心对应上一级Mip的UV
+    float2 uv = (float2(id.xy) + 0.5) * _InvSize;
+
+    // 采样四个像素 (2x2)
+    float d0 = _InputDepth.SampleLevel(sampler_InputDepth, uv, 0, int2(0, 0));
+    float d1 = _InputDepth.SampleLevel(sampler_InputDepth, uv, 0, int2(1, 0));
+    float d2 = _InputDepth.SampleLevel(sampler_InputDepth, uv, 0, int2(0, 1));
+    float d3 = _InputDepth.SampleLevel(sampler_InputDepth, uv, 0, int2(1, 1));
+
+    // Unity 默认使用 Reverse-Z（1为近裁面，0为远裁面）
+    // 为了进行遮挡剔除，我们要保留“最远”的深度，在Reverse-Z中就是最小值
+    #if defined(UNITY_REVERSED_Z)
+        float furthestDepth = min(min(d0, d1), min(d2, d3));
+    #else
+        // 在标准 Z (0为近裁面，1为远裁面) 下，最远的深度是最大值
+        float furthestDepth = max(max(d0, d1), max(d2, d3));
+    #endif
+
+    _OutputHZB[id.xy] = furthestDepth;
+}

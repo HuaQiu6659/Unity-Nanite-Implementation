@@ -1,0 +1,172 @@
+#pragma kernel CullInstances
+#pragma kernel TraverseBVH
+#pragma kernel CullClusters
+
+struct BVHNode
+{
+    float3 boundsMin;
+    float3 boundsMax;
+    int leftChildOrClusterGroup;
+    int rightChild;
+    float maxParentLODError;
+    float minLODError;
+};
+
+struct ClusterGroup
+{
+    float3 bounds;
+    float radius;
+    float minLODError;
+    float maxParentLODError;
+    int mipLevel;
+    uint childStart;
+    uint childCount;
+};
+
+struct Cluster
+{
+    float3 boundsCenter;
+    float boundsRadius;
+    float error;
+    uint indexStart;
+    uint indexCount;
+};
+
+// Buffers
+StructuredBuffer<BVHNode> _BVHNodes;
+StructuredBuffer<ClusterGroup> _ClusterGroups;
+StructuredBuffer<Cluster> _Clusters;
+
+AppendStructuredBuffer<uint> _VisibleClusters;
+
+struct VisibleTriangle
+{
+    float3 v0;
+    float3 v1;
+    float3 v2;
+    uint clusterID;
+    uint triID;
+};
+AppendStructuredBuffer<VisibleTriangle> _VisibleTrianglesSW; // For SW rasterization
+// For HW rasterization, we would use an AppendStructuredBuffer<uint> for indices.
+
+// Camera params
+float4x4 _MatrixVP;
+float3 _CameraPos;
+float _ScreenResolutionY;
+float _FOV;
+
+// HZB Params
+Texture2D<float> _HZBTexture;
+SamplerState sampler_HZBTexture;
+float2 _HZBSize;
+
+float CalculateScreenError(float3 center, float radius, float error)
+{
+    float d = distance(_CameraPos, center);
+    d = max(d, radius); // avoid division by zero or negative
+    float screenError = (error * _ScreenResolutionY) / (d * tan(_FOV * 0.5));
+    return screenError;
+}
+
+[numthreads(64, 1, 1)]
+void TraverseBVH (uint3 id : SV_DispatchThreadID)
+{
+    // Assuming 1 thread per instance, traversing the BVH.
+    // In a real implementation, we'd use persistent threads or stack-based traversal.
+    // For simplicity, a small stack here.
+    int stack[32];
+    int stackPtr = 0;
+    
+    // Root node is at the end of the list usually, but let's assume index 0 for now
+    stack[stackPtr++] = 0;
+
+    while (stackPtr > 0)
+    {
+        int nodeIdx = stack[--stackPtr];
+        BVHNode node = _BVHNodes[nodeIdx];
+        
+        // Culling bounds against frustum (simplified)
+        // ...
+
+        if (node.leftChildOrClusterGroup >= 0)
+        {
+            // Leaf node: Cluster Group
+            uint groupIdx = node.leftChildOrClusterGroup;
+            ClusterGroup group = _ClusterGroups[groupIdx];
+            
+            float screenError = CalculateScreenError(group.bounds, group.radius, group.maxParentLODError);
+            
+            // Check LOD Error threshold (e.g. 1.0 pixel)
+            if (screenError < 1.0)
+            {
+                // Select this group's children clusters
+                for (uint i = 0; i < group.childCount; i++)
+                {
+                    _VisibleClusters.Append(group.childStart + i);
+                }
+            }
+        }
+        else
+        {
+            // Internal node
+            int leftIdx = ~node.leftChildOrClusterGroup;
+            int rightIdx = node.rightChild;
+            
+            // Push children
+            if (stackPtr < 32) stack[stackPtr++] = rightIdx;
+            if (stackPtr < 32) stack[stackPtr++] = leftIdx;
+        }
+    }
+}
+
+[numthreads(64, 1, 1)]
+void CullClusters (uint3 id : SV_DispatchThreadID)
+{
+    // 获取可见的ClusterID（由上一个BVH遍历Kernel产出）
+    // 注意：实际应当使用间接调度，此处的 id.x 可能超出实际追加缓冲的计数，需传入计数检查
+    uint clusterIdx = id.x; // 简化为1:1映射
+
+    // 假设获取到了真实的Cluster
+    // Cluster cluster = _Clusters[visibleClusterID];
+    
+    // 1. 计算 Cluster 的屏幕空间包围盒
+    // float3 center = cluster.boundsCenter;
+    // float radius = cluster.boundsRadius;
+    // float3 viewPos = mul(_MatrixVP, float4(center, 1.0)).xyz; // 投影到Clip Space
+    // 假设投影后得到了屏幕空间的 AABB: minXY, maxXY [0, 1] 范围内
+    float2 minXY = float2(0, 0); 
+    float2 maxXY = float2(0.1, 0.1); 
+    float nearestDepth = 0.5; // 近裁面深度 (Reverse-Z 则越近值越大)
+
+    // 2. 根据包围盒大小计算 HZB Mip 级别
+    float2 boxSize = (maxXY - minXY) * _HZBSize;
+    float maxDim = max(boxSize.x, boxSize.y);
+    float mip = ceil(log2(max(maxDim, 1.0)));
+
+    // 3. 从 HZB 采样 4 个点
+    float2 uvCenter = (minXY + maxXY) * 0.5;
+    // HZB 采样通常需要精准的四个点，这里简化为对中心附近进行采样
+    float depthHZB = _HZBTexture.SampleLevel(sampler_HZBTexture, uvCenter, mip);
+
+    // 4. HZB 遮挡剔除比较
+    #if defined(UNITY_REVERSED_Z)
+        bool isOccluded = (nearestDepth < depthHZB); // 在 Reverse-Z 下，如果物体的最近点深度都比 HZB 记录的“最远深度”小，则被遮挡
+    #else
+        bool isOccluded = (nearestDepth > depthHZB);
+    #endif
+
+    if (!isOccluded)
+    {
+        // 如果未被遮挡
+        // 5. 屏幕尺寸判断：决定是走 HW 光栅化还是 SW 软光栅化
+        // if (maxDim > 32.0)
+        // {
+        //     将 Cluster 中的三角形索引追加到 HW 渲染缓冲
+        // }
+        // else
+        // {
+        //     将 Cluster 中的三角形顶点提取并追加到 SW 软光栅化缓冲 (_VisibleTrianglesSW)
+        // }
+    }
+}
