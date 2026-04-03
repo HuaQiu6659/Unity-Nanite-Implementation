@@ -23,6 +23,9 @@ namespace UnityNanite
             Color.blue, Color.white // LOD 6,7
         };
 
+        public RenderTexture naniteOutput;
+        private Material compositeMat;
+
         private Material materialPassMat;
         private CommandBuffer cmd;
 

@@ -36,6 +36,7 @@ Shader "Hidden/Nanite/MaterialPass"
             // Texture2D<uint2> _VisibilityTex; // Old 2D approach
             StructuredBuffer<uint> _DepthBuffer;
             StructuredBuffer<uint> _PayloadBuffer;
+            float4 _ScreenParams;
 
             // Buffers to fetch vertex data
             // StructuredBuffer<Vertex> _Vertices;
