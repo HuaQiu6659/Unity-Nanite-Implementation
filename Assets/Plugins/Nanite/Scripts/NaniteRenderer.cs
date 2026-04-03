@@ -168,7 +168,7 @@ namespace UnityNanite
             clusterGroupBuffer = new ComputeBuffer(groups.Length, Marshal.SizeOf(typeof(ClusterGroup)));
             clusterGroupBuffer.SetData(groups);
 
-            clusterBuffer = new ComputeBuffer(clusters.Length, Marshal.SizeOf(typeof(Cluster)));
+            clusterBuffer = new ComputeBuffer(clusters.Length, 36);
             clusterBuffer.SetData(clusters);
 
             vertexBuffer = new ComputeBuffer(vertices.Length, 12);
@@ -194,7 +194,7 @@ namespace UnityNanite
             if (visibleTrianglesBuffer == null || visibleTrianglesBuffer.count < maxTriangles)
             {
                 visibleTrianglesBuffer?.Release();
-                visibleTrianglesBuffer = new ComputeBuffer(Mathf.Max(100000, maxTriangles), 44, ComputeBufferType.Append); // 44 bytes = float3(12)*3 + uint(4)*2
+                visibleTrianglesBuffer = new ComputeBuffer(Mathf.Max(100000, maxTriangles), 52, ComputeBufferType.Append); // 52 bytes = float3(12)*3 + uint(4)*4
             }
         }
 
@@ -205,7 +205,7 @@ namespace UnityNanite
             
             if (visibleClustersBuffer == null) visibleClustersBuffer = new ComputeBuffer(1000, sizeof(uint), ComputeBufferType.Append);
             if (hwClusterIndicesBuffer == null) hwClusterIndicesBuffer = new ComputeBuffer(100000, sizeof(uint), ComputeBufferType.Append);
-            if (visibleTrianglesBuffer == null) visibleTrianglesBuffer = new ComputeBuffer(100000, 44, ComputeBufferType.Append); 
+            if (visibleTrianglesBuffer == null) visibleTrianglesBuffer = new ComputeBuffer(100000, 52, ComputeBufferType.Append); 
 
             // 间接调度参数缓冲 (Dispatch args = 3 uints, DrawInstanced args = 5 uints)
             if (indirectCullArgs == null) indirectCullArgs = new ComputeBuffer(3, sizeof(uint), ComputeBufferType.IndirectArguments);
@@ -295,9 +295,12 @@ namespace UnityNanite
 
 
             // 3. 执行GPU视锥体剔除和BVH遍历
+            Matrix4x4 gpuProj = GL.GetGPUProjectionMatrix(camera.projectionMatrix, true); // true = render into texture
+            Matrix4x4 matrixVP = gpuProj * camera.worldToCameraMatrix;
+
             int traverseKernel = cullingShader.FindKernel("TraverseBVH");
             cmdBuffer.SetComputeMatrixParam(cullingShader, "_ObjectToWorld", objectToWorldMatrix);
-            cmdBuffer.SetComputeMatrixParam(cullingShader, "_MatrixVP", camera.projectionMatrix * camera.worldToCameraMatrix);
+            cmdBuffer.SetComputeMatrixParam(cullingShader, "_MatrixVP", matrixVP);
             cmdBuffer.SetComputeVectorParam(cullingShader, "_CameraPos", camera.transform.position);
             cmdBuffer.SetComputeFloatParam(cullingShader, "_ScreenResolutionY", camera.pixelHeight);
             cmdBuffer.SetComputeFloatParam(cullingShader, "_FOV", camera.fieldOfView * Mathf.Deg2Rad);
@@ -355,7 +358,7 @@ namespace UnityNanite
 
             // 5. 执行软光栅化
             int rasterKernel = softwareRasterizer.FindKernel("SoftwareRasterize");
-            cmdBuffer.SetComputeMatrixParam(softwareRasterizer, "_MatrixVP", camera.projectionMatrix * camera.worldToCameraMatrix);
+            cmdBuffer.SetComputeMatrixParam(softwareRasterizer, "_MatrixVP", matrixVP);
             cmdBuffer.SetComputeIntParam(softwareRasterizer, "_RasterScreenWidth", camera.pixelWidth);
             cmdBuffer.SetComputeIntParam(softwareRasterizer, "_RasterScreenHeight", camera.pixelHeight);
             cmdBuffer.SetComputeBufferParam(softwareRasterizer, rasterKernel, "_VisibleTrianglesCount", visibleTrianglesCountBuffer);

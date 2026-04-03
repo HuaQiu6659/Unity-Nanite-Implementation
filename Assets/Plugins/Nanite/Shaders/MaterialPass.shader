@@ -8,7 +8,7 @@ Shader "Hidden/Nanite/MaterialPass"
     {
         Pass
         {
-            ZWrite On ZTest LEqual
+            ZWrite On ZTest Always
             Cull Off
 
             HLSLPROGRAM
@@ -79,8 +79,8 @@ Shader "Hidden/Nanite/MaterialPass"
             {
                 fragOut o;
                 
-                uint x = (uint)(i.uv.x * _ScreenWidth);
-                uint y = (uint)(i.uv.y * _ScreenHeight);
+                uint x = min((uint)(i.uv.x * _ScreenWidth), _ScreenWidth - 1);
+                uint y = min((uint)(i.uv.y * _ScreenHeight), _ScreenHeight - 1);
                 uint pixelIndex = y * _ScreenWidth + x;
 
                 uint depthInt = _DepthBuffer[pixelIndex];
