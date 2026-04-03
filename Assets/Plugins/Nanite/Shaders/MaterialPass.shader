@@ -14,7 +14,7 @@ Shader "Hidden/Nanite/MaterialPass"
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
-            #include "UnityCG.cginc"
+            #include "HLSLSupport.cginc"
 
             struct appdata
             {
@@ -23,8 +23,8 @@ Shader "Hidden/Nanite/MaterialPass"
 
             struct v2f
             {
-                float2 uv : TEXCOORD0;
                 float4 vertex : SV_POSITION;
+                float2 uv : TEXCOORD0;
             };
 
             struct fragOut
@@ -48,6 +48,11 @@ Shader "Hidden/Nanite/MaterialPass"
                 float2 uv = float2((v.vertexID << 1) & 2, v.vertexID & 2);
                 o.vertex = float4(uv * 2.0f - 1.0f, 0.0f, 1.0f);
                 o.uv = uv;
+                
+                #if UNITY_UV_STARTS_AT_TOP
+                o.uv.y = 1.0 - o.uv.y;
+                #endif
+                
                 return o;
             }
 

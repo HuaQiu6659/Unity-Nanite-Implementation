@@ -1,6 +1,7 @@
-using UnityEngine;
-using UnityEngine.Rendering;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using UnityEngine;
+using UnityEngine.Rendering; // 新增：用于 URP/HDRP 的 RenderPipelineManager
 
 namespace UnityNanite
 {
@@ -61,11 +62,31 @@ namespace UnityNanite
             cmd = new CommandBuffer();
             cmd.name = "Nanite Render Pass";
 
-            // 把CommandBuffer添加到相机渲染循环中（在GBuffer之前绘制Nanite物体）
-            mainCam.AddCommandBuffer(CameraEvent.BeforeGBuffer, cmd);
+            // 初始化跨管线的渲染目标 (24位深度以支持SV_Depth输出)
+            naniteOutput = new RenderTexture(Screen.width, Screen.height, 24, RenderTextureFormat.ARGB32);
+            naniteOutput.enableRandomWrite = true;
+            naniteOutput.Create();
+
+            Shader compShader = Shader.Find("Hidden/NaniteComposite");
+            if (compShader != null)
+                compositeMat = new Material(compShader);
 
             InitBuffers();
             InitHZB();
+            
+            // 对于 Built-in，使用 OnRenderImage (下文)，对于 SRP，注册事件
+            if (GraphicsSettings.renderPipelineAsset != null)
+            {
+                RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
+            }
+        }
+
+        void OnDisable()
+        {
+            if (GraphicsSettings.renderPipelineAsset != null)
+            {
+                RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
+            }
         }
 
         public void LoadModelData(Vector3[] vertices, uint[] indices, Cluster[] clusters, ClusterGroup[] groups, BVHNode[] bvhNodes)
@@ -263,12 +284,54 @@ namespace UnityNanite
             materialPassMat.SetVectorArray("_LODColors", colorArrayCache);
 
             cmd.DrawProcedural(Matrix4x4.identity, materialPassMat, 0, MeshTopology.Triangles, 3); // 全屏三角形
+
+            // 立刻执行管线 (此时 Nanite 的结果已渲染到 naniteOutput 中)
+            Graphics.ExecuteCommandBuffer(cmd);
+        }
+
+        // =======================
+        // URP / HDRP 渲染管线钩子
+        // =======================
+        private void OnEndCameraRendering(ScriptableRenderContext context, Camera camera)
+        {
+            if (camera == mainCam && naniteOutput != null && compositeMat != null)
+            {
+                CommandBuffer blitCmd = CommandBufferPool.Get("Nanite Blit Overlay");
+                // 将透明背景的 Nanite 输出覆盖叠加到当前的 SRP 相机目标上
+                blitCmd.Blit(naniteOutput, BuiltinRenderTextureType.CameraTarget, compositeMat);
+                context.ExecuteCommandBuffer(blitCmd);
+                context.Submit();
+                CommandBufferPool.Release(blitCmd);
+            }
+        }
+
+        // =======================
+        // Built-in 渲染管线钩子
+        // =======================
+        void OnRenderImage(RenderTexture src, RenderTexture dest)
+        {
+            if (GraphicsSettings.renderPipelineAsset == null && naniteOutput != null && compositeMat != null)
+            {
+                // 先把主摄像机原本拍到的场景画上去
+                Graphics.Blit(src, dest);
+                // 再把 Nanite 的输出层叠上去
+                Graphics.Blit(naniteOutput, dest, compositeMat);
+            }
+            else
+            {
+                Graphics.Blit(src, dest);
+            }
         }
 
         void OnDestroy()
         {
-            if (mainCam != null && cmd != null)
+            if (mainCam != null && cmd != null && GraphicsSettings.renderPipelineAsset == null)
+            {
+                // Clean up Built-in command buffers if any were left
                 mainCam.RemoveCommandBuffer(CameraEvent.BeforeGBuffer, cmd);
+            }
+
+            if (naniteOutput != null) naniteOutput.Release();
 
             bvhBuffer?.Release();
             clusterGroupBuffer?.Release();
