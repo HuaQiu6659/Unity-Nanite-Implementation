@@ -2,7 +2,6 @@ using UnityEngine;
 using UnityNanite;
 using System.Collections.Generic;
 
-[RequireComponent(typeof(MeshFilter))]
 public class NaniteTester : MonoBehaviour
 {
     [Header("Nanite Camera Renderer")]
@@ -16,14 +15,34 @@ public class NaniteTester : MonoBehaviour
             return;
         }
 
-        MeshFilter mf = GetComponent<MeshFilter>();
-        if (mf == null || mf.sharedMesh == null)
+        // 自动在自身及所有子节点中寻找可用的 Mesh
+        Mesh mesh = null;
+        Renderer targetRenderer = null;
+
+        // 1. 尝试找普通的 MeshFilter
+        MeshFilter mf = GetComponentInChildren<MeshFilter>();
+        if (mf != null && mf.sharedMesh != null)
         {
-            Debug.LogError("NaniteTester: No Mesh found on the MeshFilter!");
-            return;
+            mesh = mf.sharedMesh;
+            targetRenderer = mf.GetComponent<MeshRenderer>();
+        }
+        else
+        {
+            // 2. 如果没有 MeshFilter，尝试找带蒙皮的 SkinnedMeshRenderer
+            SkinnedMeshRenderer smr = GetComponentInChildren<SkinnedMeshRenderer>();
+            if (smr != null && smr.sharedMesh != null)
+            {
+                mesh = smr.sharedMesh;
+                targetRenderer = smr;
+                Debug.LogWarning("NaniteTester: Found a SkinnedMeshRenderer! Note that Nanite currently only supports static meshes. The character will be rendered in its T-Pose/Bind-Pose without animation.");
+            }
         }
 
-        Mesh mesh = mf.sharedMesh;
+        if (mesh == null)
+        {
+            Debug.LogError("NaniteTester: No MeshFilter or SkinnedMeshRenderer found on this object or its children!");
+            return;
+        }
         Vector3[] vertices = mesh.vertices;
         Vector3[] normals = mesh.normals;
         int[] indices = mesh.triangles;
@@ -46,10 +65,9 @@ public class NaniteTester : MonoBehaviour
         );
 
         // Disable normal Unity rendering
-        var meshRenderer = GetComponent<MeshRenderer>();
-        if (meshRenderer != null)
+        if (targetRenderer != null)
         {
-            meshRenderer.enabled = false;
+            targetRenderer.enabled = false;
         }
 
         Debug.Log("NaniteTester: Load complete! Switch to Debug Mode on the Camera to see clusters.");
