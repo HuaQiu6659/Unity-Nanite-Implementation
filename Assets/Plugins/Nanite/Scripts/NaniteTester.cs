@@ -23,6 +23,8 @@ public class NaniteTester : MonoBehaviour
         Transform[] bones = null;
         Matrix4x4[] bindposes = null;
 
+        // 1. 尝试找普通的 MeshFilter
+        MeshFilter mf = GetComponentInChildren<MeshFilter>();
         // 2. 如果没有 MeshFilter，尝试找带蒙皮的 SkinnedMeshRenderer
         SkinnedMeshRenderer smr = GetComponentInChildren<SkinnedMeshRenderer>();
         if (mf != null && mf.sharedMesh != null)
