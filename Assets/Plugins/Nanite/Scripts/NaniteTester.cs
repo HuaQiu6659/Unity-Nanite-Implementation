@@ -7,6 +7,11 @@ public class NaniteTester : MonoBehaviour
     [Header("Nanite Camera Renderer")]
     public NaniteRenderer naniteRenderer;
 
+    [Header("Nanite Build Settings")]
+    [Range(3, 7)]
+    [Tooltip("Maximum LOD levels to generate (Currently prototype only builds base level).")]
+    public int maxLODLevel = 5;
+
     void Start()
     {
         if (naniteRenderer == null)
@@ -71,10 +76,10 @@ public class NaniteTester : MonoBehaviour
         Vector3[] normals = mesh.normals;
         int[] indices = mesh.triangles;
 
-        Debug.Log($"NaniteTester: Building Nanite data for {mesh.name} ({indices.Length / 3} triangles)...");
+        Debug.Log($"NaniteTester: Building Nanite data for {mesh.name} ({indices.Length / 3} triangles) with Max LOD: {maxLODLevel}...");
 
         // 1. Build Clusters and DAG
-        NaniteSubMesh naniteMesh = NaniteBuilder.BuildNanite(vertices, normals, indices);
+        NaniteSubMesh naniteMesh = NaniteBuilder.BuildNanite(vertices, normals, indices, maxLODLevel);
 
         // 2. Build BVH
         List<BVHNode> bvhNodes = NaniteBVHBuilder.BuildBVH(naniteMesh.clusterGroups);

@@ -266,8 +266,11 @@ namespace UnityNanite
             return bounds;
         }
 
-        public static NaniteSubMesh BuildNanite(Vector3[] vertices, Vector3[] normals, int[] indices)
+        public static NaniteSubMesh BuildNanite(Vector3[] vertices, Vector3[] normals, int[] indices, int maxLODLevel = 5)
         {
+            // Clamp maxLODLevel to requested 3~7 range
+            maxLODLevel = Mathf.Clamp(maxLODLevel, 3, 7);
+
             // See Zhihu article implementation
             NaniteSubMesh res = new NaniteSubMesh();
             List<ClusterGroup> clusterGroupList = new List<ClusterGroup>();
