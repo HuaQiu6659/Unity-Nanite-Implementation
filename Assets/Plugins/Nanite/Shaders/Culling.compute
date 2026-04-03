@@ -30,7 +30,8 @@ struct Cluster
     float error;
     uint indexStart;
     uint indexCount;
-    uint materialID; // 新增
+    uint materialID; 
+    uint mipLevel; // 新增：保存当前的LOD层级
 };
 
 // Buffers
@@ -47,7 +48,8 @@ struct VisibleTriangle
     float3 v2;
     uint clusterID;
     uint triID;
-    uint materialID; // 传递给光栅化
+    uint materialID; 
+    uint mipLevel; // 新增：传递给软光栅与材质Pass
 };
 AppendStructuredBuffer<VisibleTriangle> _VisibleTrianglesSW; // For SW rasterization
 AppendStructuredBuffer<uint> _HWIndicesBuffer; // For HW rasterization

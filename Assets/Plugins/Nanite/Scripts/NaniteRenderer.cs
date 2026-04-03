@@ -13,6 +13,15 @@ namespace UnityNanite
         public Shader materialPassShader;
         public ComputeShader hzbGenerateShader;
 
+        [Header("Debug")]
+        public bool debugMode = false;
+        public bool showLODWatermark = false;
+        public Color[] lodColors = new Color[] {
+            Color.green, Color.yellow, new Color(1f, 0.5f, 0f), // LOD 0,1,2
+            Color.red, Color.magenta, Color.cyan, // LOD 3,4,5
+            Color.blue, Color.white // LOD 6,7
+        };
+
         private Material materialPassMat;
         private CommandBuffer cmd;
 
@@ -171,6 +180,18 @@ namespace UnityNanite
             materialPassMat.SetBuffer("_VisibilityBuffer64", visibilityBuffer64);
             materialPassMat.SetInt("_ScreenWidth", Screen.width);
             materialPassMat.SetInt("_ScreenHeight", Screen.height);
+            
+            // --- Debug 模式传参 ---
+            materialPassMat.SetInt("_DebugMode", debugMode ? 1 : 0);
+            materialPassMat.SetInt("_ShowLODWatermark", showLODWatermark ? 1 : 0);
+            
+            Vector4[] colorArray = new Vector4[8];
+            for(int i = 0; i < 8; i++)
+            {
+                colorArray[i] = i < lodColors.Length ? (Vector4)lodColors[i] : Vector4.one;
+            }
+            materialPassMat.SetVectorArray("_LODColors", colorArray);
+
             cmd.DrawProcedural(Matrix4x4.identity, materialPassMat, 0, MeshTopology.Triangles, 3); // 全屏三角形
         }
 

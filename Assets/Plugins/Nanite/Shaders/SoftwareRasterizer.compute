@@ -17,7 +17,8 @@ struct VisibleTriangle
     float3 v2;
     uint clusterID;
     uint triID;
-    uint materialID; // 新增：材质ID
+    uint materialID;
+    uint mipLevel; // 新增：保存当前的LOD层级
 };
 
 StructuredBuffer<VisibleTriangle> _VisibleTrianglesSW;
@@ -26,14 +27,11 @@ uint _ScreenWidth;
 uint _ScreenHeight;
 
 // Function to pack visibility data
-uint64_t PackVisibility(float depth, uint clusterID, uint triID, uint materialID)
+uint64_t PackVisibility(float depth, uint clusterID, uint triID, uint materialID, uint mipLevel)
 {
-    // Map depth [0,1] to uint (assuming Reverse-Z, we might need to invert if we use InterlockedMax, 
-    // or just use InterlockedMax if we pack 1.0 - depth)
     uint depthInt = asuint(depth); 
-    // Payload (32 bits): [ MaterialID (8 bits) | ClusterID (12 bits) | TriangleID (12 bits) ]
-    // 注意：20 bits 给 cluster 实际上支持 104万 个 cluster。这里缩小为 12 bits (4096个) 仅为示例多材质打包
-    uint idData = ((materialID & 0xFF) << 24) | ((clusterID & 0xFFF) << 12) | (triID & 0xFFF);
+    // Payload (32 bits): [ MipLevel (4) | MaterialID (4) | ClusterID (12) | TriangleID (12) ]
+    uint idData = ((mipLevel & 0xF) << 28) | ((materialID & 0xF) << 24) | ((clusterID & 0xFFF) << 12) | (triID & 0xFFF);
     
     uint64_t packed = ((uint64_t)depthInt << 32) | (uint64_t)idData;
     return packed;
@@ -94,7 +92,7 @@ void SoftwareRasterize (uint3 id : SV_DispatchThreadID)
                 float depth = b0 * p0.z + b1 * p1.z + b2 * p2.z;
                 
                 // Pack data
-                uint64_t packedData = PackVisibility(depth, tri.clusterID, tri.triID);
+                uint64_t packedData = PackVisibility(depth, tri.clusterID, tri.triID, tri.materialID, tri.mipLevel);
                 
                 // Atomically update the screen buffer
                 uint pixelIndex = y * _ScreenWidth + x;
