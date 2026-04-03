@@ -182,6 +182,7 @@ namespace UnityNanite
         void Update()
         {
             if (cullingShader == null || softwareRasterizer == null || materialPassMat == null || buildIndirectArgsShader == null) return;
+            if (bvhBuffer == null || !bvhBuffer.IsValid()) return; // 防止未 LoadModelData 时报错
 
             cmd.Clear();
             
@@ -231,7 +232,7 @@ namespace UnityNanite
                 cmd.SetComputeTextureParam(cullingShader, clusterCullKernel, "_HZBTexture", hzbMips[0]);
                 cmd.SetComputeVectorParam(cullingShader, "_HZBSize", new Vector2(hzbMips[0].width, hzbMips[0].height));
             }
-            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleClusters", visibleClustersBuffer);
+            cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleClustersRead", visibleClustersBuffer);
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_VisibleClustersCount", visibleClustersCountBuffer);
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Clusters", clusterBuffer);
             cmd.SetComputeBufferParam(cullingShader, clusterCullKernel, "_Vertices", vertexBuffer);
@@ -269,8 +270,9 @@ namespace UnityNanite
             // 6. 执行硬光栅化 (HW Rasterization)
             // cmd.DrawProceduralIndirect(Matrix4x4.identity, hwMaterial, 0, MeshTopology.Triangles, indirectDrawArgs, 0);
 
-            // 7. 材质Pass与G-Buffer写入
-            cmd.SetRenderTarget(BuiltinRenderTextureType.GBuffer0); // 输出到反照率等G-Buffer
+            // 7. 材质Pass与G-Buffer写入 (改为渲染到独立的 Render Target 以兼容 SRP/URP)
+            cmd.SetRenderTarget(naniteOutput); 
+            cmd.ClearRenderTarget(true, true, Color.clear); // 背景透明，方便合成
             materialPassMat.SetBuffer("_DepthBuffer", depthBuffer);
             materialPassMat.SetBuffer("_PayloadBuffer", payloadBuffer);
             materialPassMat.SetInt("_ScreenWidth", Screen.width);
