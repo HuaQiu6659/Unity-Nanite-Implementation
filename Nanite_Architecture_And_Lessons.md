@@ -60,6 +60,19 @@
 
 ---
 
+## 5. 核心参考资料与开源库致谢 (References)
+
+在本项目从零到一的构建、试错与重构过程中，以下资料和开源项目提供了不可或缺的理论支撑与底层技术实现：
+
+*   **[MeshOptimizer (by zeux)](https://github.com/zeux/meshoptimizer)**
+    *   **作用**：本项目最核心的 C++ 底层基石。我们利用其 `meshopt_buildMeshlets` 和 `meshopt_simplify` 接口，实现了极其高效的网格分簇（Clusterize）与边塌陷简化。
+    *   **踩坑价值**：它的引入让我们经历了完整的 C++/C# 混合编程、P/Invoke 指针转换 (`size_t` 到 `UIntPtr`) 以及跨平台编译（Zig 交叉编译纯静态库）的“大洗礼”。
+*   **[《在 Unity 中实现简易版 Nanite》 (知乎 @W_101)](https://zhuanlan.zhihu.com/p/653609802)**
+    *   **作用**：本原型最核心的架构灵感来源。其提供的 C# 封装思路、Compute Shader 软件光栅化（Barycentric Coordinates）、以及原子操作深度测试（`InterlockedMax`）的代码骨架，为我们指明了渲染管线的方向。
+    *   **踩坑价值**：在复刻其代码时，我们发现了许多潜在的 Bug（如 ComputeBuffer 步长未动态计算、根节点 LOD 误差无穷大死锁等），并在此基础上大幅优化，将其从仅支持 Built-in 强行叠加，升级为了完美融入 URP 并支持后处理的 Native Feature。
+
+---
+
 ## 4. 总结与展望
 
 这套原型系统成功验证了在 Unity 中实现 **软件光栅化 (Software Rasterization) + 硬件深度回写 (Depth Write-back) + 纯 GPU 驱动渲染管线 (GPU-Driven Rendering Pipeline)** 的可行性。
